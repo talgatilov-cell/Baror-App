@@ -21,7 +21,7 @@ def get_base64_of_bin_file(bin_file):
 bg_base64 = get_base64_of_bin_file('image_bea22f.jpg')
 
 # --- 3. ניהול נתונים ומשתמשים ---
-USERS_FILE = 'users.json'
+USERS_FILE = os.environ.get('USERS_FILE', 'users.json')
 
 def load_users():
     if os.path.exists(USERS_FILE):

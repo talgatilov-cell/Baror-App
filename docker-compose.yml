@@ -1,0 +1,13 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8501:8501"
+    environment:
+      USERS_FILE: /data/users.json
+    volumes:
+      - app_data:/data
+    restart: unless-stopped
+
+volumes:
+  app_data:
