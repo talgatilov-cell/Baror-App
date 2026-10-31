@@ -9,7 +9,6 @@ import plotly.express as px
 # --- 1. הגדרות בסיס ---
 st.set_page_config(page_title="דשבורד בראור קורס קצינים", page_icon="logo.png", layout="centered")
 
-
 # --- 2. פונקציית תמונת רקע ---
 def get_base64_of_bin_file(bin_file):
     try:
@@ -18,7 +17,6 @@ def get_base64_of_bin_file(bin_file):
         return base64.b64encode(data).decode()
     except:
         return None
-
 
 bg_base64 = get_base64_of_bin_file('image_bea22f.jpg')
 
@@ -112,18 +110,15 @@ else:
 # --- 4. ניהול נתונים ומשתמשים ---
 USERS_FILE = 'users.json'
 
-
 def load_users():
     if os.path.exists(USERS_FILE):
         with open(USERS_FILE, 'r', encoding='utf-8') as f:
             return json.load(f)
     return {}
 
-
 def save_users(users):
     with open(USERS_FILE, 'w', encoding='utf-8') as f:
         json.dump(users, f, ensure_ascii=False, indent=4)
-
 
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
@@ -180,6 +175,8 @@ if not st.session_state.logged_in:
 else:
     # תפריט ניווט צדדי
     with st.sidebar:
+        # כאן הוספנו את הלוגו שלך בראש התפריט!
+        st.image("logo.png", use_container_width=True)
         st.header("📌 ניווט פלוגתי")
 
         page = st.radio(
@@ -325,11 +322,11 @@ else:
     elif page == "סרטוני הדרכה 🎥":
         st.title("סרטוני אימון וטכניקה 🎥")
         st.write("ריכזנו עבורכם סרטונים מומלצים שיעזרו לדייק את הטכניקה ולשפר תוצאות לקראת הבוחן:")
-
+        
         st.subheader("טכניקה תקנית לשכיבות סמיכה")
-        st.video("https://www.youtube.com/watch?v=IODxDxX7oi4")
-
+        st.video("https://www.youtube.com/watch?v=IODxDxX7oi4") 
+        
         st.divider()
-
+        
         st.subheader("דגשים לריצת 3 ק\"מ ושיפור טכניקת ריצה")
         st.video("https://www.youtube.com/watch?v=9L2b2khySLE")
