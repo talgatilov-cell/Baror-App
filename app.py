@@ -232,7 +232,7 @@ else:
         st.divider()
         st.subheader("הזנת תוצאות בוחן חדש")
         with st.form("baror_form"):
-            test_date = st.date_input("תאריך הבוחן", value=datetime.today())
+            test_date = st.date_input("תאריך האימון", value=datetime.today())
             col1, col2 = st.columns(2)
             with col1:
                 run_time = st.text_input("זמן ריצה 3 ק״מ (למשל 15:40)")
