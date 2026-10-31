@@ -7,7 +7,7 @@ import base64
 import plotly.express as px
 
 # --- 1. הגדרות בסיס ---
-st.set_page_config(page_title="דשבורד בראור - קורס קצינים", page_icon="🎖️", layout="centered")
+st.set_page_config(page_title="דשבורד בראור קורס קצינים", page_icon="logo.png", layout="centered")
 
 
 # --- 2. פונקציית תמונת רקע ---
