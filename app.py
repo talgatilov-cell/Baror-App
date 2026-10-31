@@ -20,7 +20,7 @@ def get_base64_of_bin_file(bin_file):
 
 bg_base64 = get_base64_of_bin_file('image_bea22f.jpg')
 
-# --- 3. ניהול נתונים ומשתמשים (חייב להיות לפני ה-CSS כדי שנדע אם מחוברים) ---
+# --- 3. ניהול נתונים ומשתמשים ---
 USERS_FILE = 'users.json'
 
 def load_users():
@@ -45,13 +45,12 @@ users = load_users()
 for u in users:
     if "history" not in users[u]:
         users[u]["history"] = []
-    # תאימות למשתמשים ישנים שאין להם עדיין את שדה הכ.מ
     if "is_km" not in users[u]:
         users[u]["is_km"] = False
 
-# --- 4. הזרקת העיצוב (CSS) מותאם למצב התחברות ---
+# --- 4. הזרקת העיצוב (CSS) ---
 if not st.session_state.logged_in:
-    # עיצוב מסך התחברות: רקע צבאי, תיבה כהה שקופה, טקסט לבן
+    # עיצוב מסך התחברות - קופסה כהה חצי שקופה עם טקסט לבן
     st.markdown(f"""
         <style>
         .stApp {{
@@ -61,12 +60,12 @@ if not st.session_state.logged_in:
             background-position: center;
             background-attachment: fixed;
         }}
-        .main .block-container {{
-            background-color: rgba(0, 0, 0, 0.75);
-            border-radius: 15px;
+        .main .block-container, [data-testid="stMainBlockContainer"] {{
+            background-color: rgba(0, 0, 0, 0.75) !important;
+            border-radius: 15px !important;
             padding: 2rem !important; 
             margin-top: 1rem;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5) !important;
             direction: rtl !important;
         }}
         p, h1, h2, h3, h4, h5, h6, span, label, li, ul, ol, .stMarkdown, .stText {{
@@ -75,22 +74,19 @@ if not st.session_state.logged_in:
             font-family: 'Segoe UI', sans-serif;
             color: white !important;
         }}
-        /* שדות קלט יישארו עם טקסט שחור על רקע לבן כדי שאפשר יהיה לראות מה מקלידים */
         input {{
             direction: rtl !important;
             text-align: right !important;
             color: black !important;
             background-color: rgba(255,255,255,0.9) !important;
         }}
-        .stButton>button {{
-            background-color: #4a5c40; color: white !important; border-radius: 8px; width: 100%; border: none; font-weight: bold; 
-        }}
+        .stButton>button {{ background-color: #4a5c40; color: white !important; border-radius: 8px; width: 100%; border: none; font-weight: bold; }}
         .stButton>button:hover {{ background-color: #3b4a33; }}
         .stDeployButton {{ display: none !important; }}
         </style>
     """, unsafe_allow_html=True)
 else:
-    # עיצוב מערכת פנימית (אחרי התחברות): תיבה לבנה, טקסט שחור קריא
+    # עיצוב מערכת פנימית - קופסה לבנה חצי-שקופה לקריאות מקסימלית של הטקסט השחור
     st.markdown(f"""
         <style>
         .stApp {{
@@ -100,12 +96,12 @@ else:
             background-position: center;
             background-attachment: fixed;
         }}
-        .main .block-container {{
-            background-color: rgba(255, 255, 255, 0.95);
-            border-radius: 15px;
+        .main .block-container, [data-testid="stMainBlockContainer"] {{
+            background-color: rgba(255, 255, 255, 0.90) !important;
+            border-radius: 15px !important;
             padding: 2rem !important; 
             margin-top: 1rem;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3) !important;
             direction: rtl !important;
         }}
         p, h1, h2, h3, h4, h5, h6, span, label, li, ul, ol, .stMarkdown, .stText, input, .stAlert div, .stRadio div {{
@@ -188,7 +184,6 @@ else:
     if page == "האזור האישי 🎯":
         st.title(f"אהלן {st.session_state.current_user} 👋")
         
-        # תצוגת סטטוס רף מותאמת לכ.מ
         if st.session_state.is_km:
             st.write(f"המדדים שלך מחושבים לפי רף: **{st.session_state.gender} (כ.מ - הליכה 6 ק״מ)**")
         else:
@@ -206,14 +201,16 @@ else:
                 st.markdown(f"<p style='text-align: center; font-weight: bold; color: #4a5c40;'>{chart_title}</p>", unsafe_allow_html=True)
                 fig1 = px.line(df, x='date', y='זמן_בדקות', markers=True)
                 fig1.update_traces(line_color='#4a5c40', marker=dict(size=10, color='#4a5c40'))
-                fig1.update_layout(xaxis_title="תאריך", yaxis_title="דקות", plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', margin=dict(l=0, r=0, t=10, b=0))
+                # הוספת רקע לבן ואטום יותר ספציפית לגרפים
+                fig1.update_layout(xaxis_title="תאריך", yaxis_title="דקות", plot_bgcolor='rgba(255,255,255,0.8)', paper_bgcolor='rgba(255,255,255,0.8)', margin=dict(l=0, r=0, t=10, b=0))
                 st.plotly_chart(fig1, use_container_width=True)
 
             with col_chart2:
                 st.markdown("<p style='text-align: center; font-weight: bold; color: #4a5c40;'>שכיבות סמיכה (גבוה = טוב)</p>", unsafe_allow_html=True)
                 fig2 = px.line(df, x='date', y='pushups', markers=True)
                 fig2.update_traces(line_color='#4a5c40', marker=dict(size=10, color='#4a5c40'))
-                fig2.update_layout(xaxis_title="תאריך", yaxis_title="חזרות", plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', margin=dict(l=0, r=0, t=10, b=0))
+                # הוספת רקע לבן ואטום יותר ספציפית לגרפים
+                fig2.update_layout(xaxis_title="תאריך", yaxis_title="חזרות", plot_bgcolor='rgba(255,255,255,0.8)', paper_bgcolor='rgba(255,255,255,0.8)', margin=dict(l=0, r=0, t=10, b=0))
                 st.plotly_chart(fig2, use_container_width=True)
 
         st.divider()
@@ -241,13 +238,11 @@ else:
                     run_status = ""
                     pushups_status = ""
 
-                    # בדיקת כ.מ (הליכה 6 ק"מ ב-66 דקות שהם 3960 שניות)
                     if st.session_state.is_km:
                         if total_seconds <= 3960:
                             run_status = "עובר ✅ (כ.מ)"
                         else:
                             run_status = "נכשל ❌ (כ.מ)"
-                    # בדיקת ריצה רגילה
                     else:
                         if st.session_state.gender == "זכר":
                             if total_seconds <= 750: run_status = "מצטיין 🏆"
@@ -258,7 +253,6 @@ else:
                             elif total_seconds <= 1180: run_status = "עובר ✅"
                             else: run_status = "נכשל ❌"
 
-                    # שכיבות סמיכה - רף זהה לכולם לפי מגדר
                     if st.session_state.gender == "זכר":
                         if pushups >= 36: pushups_status = "מצטיין 🏆"
                         elif pushups >= 22: pushups_status = "עובר ✅"
