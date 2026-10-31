@@ -20,94 +20,7 @@ def get_base64_of_bin_file(bin_file):
 
 bg_base64 = get_base64_of_bin_file('image_bea22f.jpg')
 
-# --- 3. הזרקת העיצוב (CSS) ---
-if bg_base64:
-    st.markdown(f"""
-        <style>
-        /* 1. קיבוע השלד החיצוני משמאל לימין כדי לשמור את כפתור הניווט במקומו הבטוח */
-        .stApp {{
-            direction: ltr !important; 
-            background-image: url("data:image/jpg;base64,{bg_base64}");
-            background-size: cover;
-            background-position: center;
-            background-attachment: fixed;
-        }}
-
-        .main .block-container {{
-            background-color: rgba(255, 255, 255, 0.95);
-            border-radius: 15px;
-            padding: 2rem !important; 
-            margin-top: 1rem;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-            direction: rtl !important;
-        }}
-
-        /* 2. הפתרון המלא לפיסוק: כיווניות עברית לכל סוגי הטקסטים, הרשימות ומיכלי המארקדאון */
-        p, h1, h2, h3, h4, h5, h6, span, label, li, ul, ol, .stMarkdown, .stMarkdown p, .stMarkdown div, [data-testid="stMarkdownContainer"], .stText, input, .stAlert div, .stRadio div {{
-            direction: rtl !important;
-            text-align: right !important;
-            font-family: 'Segoe UI', sans-serif;
-        }}
-
-        /* 3. סרגל הצד */
-        [data-testid="stSidebar"] {{
-            background-color: rgba(240, 242, 246, 1) !important;
-            direction: ltr !important; 
-        }}
-        [data-testid="stSidebarUserContent"] {{
-            direction: rtl !important; 
-        }}
-
-        /* 4. כפתורים */
-        .stButton>button {{
-            background-color: #4a5c40; color: white !important; border-radius: 8px; width: 100%; border: none; font-weight: bold; 
-        }}
-        .stButton>button:hover {{ background-color: #3b4a33; }}
-
-        /* 5. הסתרת כפתור הענן (Deploy) בלבד */
-        .stDeployButton {{
-            display: none !important;
-        }}
-
-        /* 6. התאמות למסך הטלפון */
-        @media (max-width: 768px) {{
-            .main .block-container {{
-                padding: 1rem !important;
-                width: 100% !important;
-            }}
-            [data-testid="stSidebar"] {{
-                min-width: 280px !important;
-            }}
-        }}
-        </style>
-    """, unsafe_allow_html=True)
-else:
-    st.markdown("""
-        <style>
-        .stApp { direction: ltr !important; background-color: #f0f2f6; }
-        .main .block-container { background-color: white; border-radius: 15px; padding: 2rem !important; margin-top: 1rem; box-shadow: 0 4px 15px rgba(0,0,0,0.2); direction: rtl !important; }
-
-        /* 2. הפתרון המלא לפיסוק: כיווניות עברית לכל סוגי הטקסטים, הרשימות ומיכלי המארקדאון */
-        p, h1, h2, h3, h4, h5, h6, span, label, li, ul, ol, .stMarkdown, .stMarkdown p, .stMarkdown div, [data-testid="stMarkdownContainer"], .stText, input, .stAlert div, .stRadio div {
-            direction: rtl !important;
-            text-align: right !important;
-            font-family: 'Segoe UI', sans-serif;
-        }
-
-        [data-testid="stSidebar"] { background-color: rgba(240, 242, 246, 1) !important; direction: ltr !important; }
-        [data-testid="stSidebarUserContent"] { direction: rtl !important; }
-        .stButton>button { background-color: #4a5c40; color: white !important; border-radius: 8px; width: 100%; border: none; font-weight: bold; }
-        .stButton>button:hover { background-color: #3b4a33; }
-        .stDeployButton { display: none !important; }
-
-        @media (max-width: 768px) {
-            .main .block-container { padding: 1rem !important; width: 100% !important; }
-            [data-testid="stSidebar"] { min-width: 280px !important; }
-        }
-        </style>
-    """, unsafe_allow_html=True)
-
-# --- 4. ניהול נתונים ומשתמשים ---
+# --- 3. ניהול נתונים ומשתמשים (חייב להיות לפני ה-CSS כדי שנדע אם מחוברים) ---
 USERS_FILE = 'users.json'
 
 def load_users():
@@ -125,12 +38,92 @@ if 'logged_in' not in st.session_state:
     st.session_state.current_user = None
     st.session_state.email = None
     st.session_state.gender = None
+    st.session_state.is_km = False
 
 users = load_users()
 
 for u in users:
     if "history" not in users[u]:
         users[u]["history"] = []
+    # תאימות למשתמשים ישנים שאין להם עדיין את שדה הכ.מ
+    if "is_km" not in users[u]:
+        users[u]["is_km"] = False
+
+# --- 4. הזרקת העיצוב (CSS) מותאם למצב התחברות ---
+if not st.session_state.logged_in:
+    # עיצוב מסך התחברות: רקע צבאי, תיבה כהה שקופה, טקסט לבן
+    st.markdown(f"""
+        <style>
+        .stApp {{
+            direction: ltr !important; 
+            background-image: url("data:image/jpg;base64,{bg_base64}");
+            background-size: cover;
+            background-position: center;
+            background-attachment: fixed;
+        }}
+        .main .block-container {{
+            background-color: rgba(0, 0, 0, 0.75);
+            border-radius: 15px;
+            padding: 2rem !important; 
+            margin-top: 1rem;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            direction: rtl !important;
+        }}
+        p, h1, h2, h3, h4, h5, h6, span, label, li, ul, ol, .stMarkdown, .stText {{
+            direction: rtl !important;
+            text-align: right !important;
+            font-family: 'Segoe UI', sans-serif;
+            color: white !important;
+        }}
+        /* שדות קלט יישארו עם טקסט שחור על רקע לבן כדי שאפשר יהיה לראות מה מקלידים */
+        input {{
+            direction: rtl !important;
+            text-align: right !important;
+            color: black !important;
+            background-color: rgba(255,255,255,0.9) !important;
+        }}
+        .stButton>button {{
+            background-color: #4a5c40; color: white !important; border-radius: 8px; width: 100%; border: none; font-weight: bold; 
+        }}
+        .stButton>button:hover {{ background-color: #3b4a33; }}
+        .stDeployButton {{ display: none !important; }}
+        </style>
+    """, unsafe_allow_html=True)
+else:
+    # עיצוב מערכת פנימית (אחרי התחברות): תיבה לבנה, טקסט שחור קריא
+    st.markdown(f"""
+        <style>
+        .stApp {{
+            direction: ltr !important; 
+            background-image: url("data:image/jpg;base64,{bg_base64}");
+            background-size: cover;
+            background-position: center;
+            background-attachment: fixed;
+        }}
+        .main .block-container {{
+            background-color: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            padding: 2rem !important; 
+            margin-top: 1rem;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            direction: rtl !important;
+        }}
+        p, h1, h2, h3, h4, h5, h6, span, label, li, ul, ol, .stMarkdown, .stText, input, .stAlert div, .stRadio div {{
+            direction: rtl !important;
+            text-align: right !important;
+            font-family: 'Segoe UI', sans-serif;
+        }}
+        [data-testid="stSidebar"] {{ background-color: rgba(240, 242, 246, 1) !important; direction: ltr !important; }}
+        [data-testid="stSidebarUserContent"] {{ direction: rtl !important; }}
+        .stButton>button {{ background-color: #4a5c40; color: white !important; border-radius: 8px; width: 100%; border: none; font-weight: bold; }}
+        .stButton>button:hover {{ background-color: #3b4a33; }}
+        .stDeployButton {{ display: none !important; }}
+        @media (max-width: 768px) {{
+            .main .block-container {{ padding: 1rem !important; width: 100% !important; }}
+            [data-testid="stSidebar"] {{ min-width: 280px !important; }}
+        }}
+        </style>
+    """, unsafe_allow_html=True)
 
 # --- 5. מסך התחברות (לפני כניסה) ---
 if not st.session_state.logged_in:
@@ -150,6 +143,7 @@ if not st.session_state.logged_in:
                 st.session_state.current_user = users[login_email]['name']
                 st.session_state.email = login_email
                 st.session_state.gender = users[login_email]['gender']
+                st.session_state.is_km = users[login_email].get('is_km', False)
                 st.rerun()
             else:
                 st.error("אימייל או סיסמה שגויים.")
@@ -159,6 +153,7 @@ if not st.session_state.logged_in:
         reg_name = st.text_input("שם מלא", key="reg_name")
         reg_email = st.text_input("אימייל", key="reg_email")
         reg_gender = st.selectbox("מגדר (קובע רף)", ["בחר/י", "זכר", "נקבה"], key="reg_gender")
+        reg_km = st.checkbox("יש לי פטור ריצה (כ.מ) - יעד הליכה 6 ק״מ", key="reg_km")
         reg_password = st.text_input("בחר סיסמה", type="password", key="reg_pass")
 
         if st.button("הרשם"):
@@ -167,26 +162,19 @@ if not st.session_state.logged_in:
             elif reg_gender == "בחר/י" or not reg_name or not reg_password:
                 st.warning("נא למלא את כל השדות.")
             else:
-                users[reg_email] = {"name": reg_name, "gender": reg_gender, "password": reg_password, "history": []}
+                users[reg_email] = {"name": reg_name, "gender": reg_gender, "password": reg_password, "is_km": reg_km, "history": []}
                 save_users(users)
                 st.success("נרשמת בהצלחה! עבור/י ללשונית התחברות.")
 
 # --- 6. המערכת (אחרי התחברות) - ניווט ועמודים ---
 else:
-    # תפריט ניווט צדדי
     with st.sidebar:
-        # כאן הוספנו את הלוגו שלך בראש התפריט!
         st.image("logo.png", use_container_width=True)
         st.header("📌 ניווט פלוגתי")
 
         page = st.radio(
             "לאן תרצה/י לעבור?",
-            [
-                "האזור האישי 🎯",
-                "טיפים לריצה 🏃",
-                "טיפים לשכיבות סמיכה 💪",
-                "סרטוני הדרכה 🎥"
-            ],
+            ["האזור האישי 🎯", "טיפים לריצה 🏃", "טיפים לשכיבות סמיכה 💪", "סרטוני הדרכה 🎥"],
             label_visibility="collapsed"
         )
 
@@ -199,7 +187,12 @@ else:
 
     if page == "האזור האישי 🎯":
         st.title(f"אהלן {st.session_state.current_user} 👋")
-        st.write(f"המדדים שלך מחושבים לפי רף: **{st.session_state.gender}**")
+        
+        # תצוגת סטטוס רף מותאמת לכ.מ
+        if st.session_state.is_km:
+            st.write(f"המדדים שלך מחושבים לפי רף: **{st.session_state.gender} (כ.מ - הליכה 6 ק״מ)**")
+        else:
+            st.write(f"המדדים שלך מחושבים לפי רף: **{st.session_state.gender}**")
 
         user_history = users[st.session_state.email]["history"]
         if user_history:
@@ -207,26 +200,20 @@ else:
             df = pd.DataFrame(user_history)
             df['זמן_בדקות'] = df['run_seconds'] / 60
 
-            # יצירת גרפים מקצועיים ואינטראקטיביים עם Plotly
             col_chart1, col_chart2 = st.columns(2)
             with col_chart1:
-                st.markdown(
-                    "<p style='text-align: center; font-weight: bold; color: #4a5c40;'>זמן ריצה בדקות (נמוך = טוב)</p>",
-                    unsafe_allow_html=True)
+                chart_title = "זמן הליכה בדקות (נמוך = טוב)" if st.session_state.is_km else "זמן ריצה בדקות (נמוך = טוב)"
+                st.markdown(f"<p style='text-align: center; font-weight: bold; color: #4a5c40;'>{chart_title}</p>", unsafe_allow_html=True)
                 fig1 = px.line(df, x='date', y='זמן_בדקות', markers=True)
                 fig1.update_traces(line_color='#4a5c40', marker=dict(size=10, color='#4a5c40'))
-                fig1.update_layout(xaxis_title="תאריך", yaxis_title="דקות", plot_bgcolor='rgba(0,0,0,0)',
-                                   paper_bgcolor='rgba(0,0,0,0)', margin=dict(l=0, r=0, t=10, b=0))
+                fig1.update_layout(xaxis_title="תאריך", yaxis_title="דקות", plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', margin=dict(l=0, r=0, t=10, b=0))
                 st.plotly_chart(fig1, use_container_width=True)
 
             with col_chart2:
-                st.markdown(
-                    "<p style='text-align: center; font-weight: bold; color: #4a5c40;'>שכיבות סמיכה (גבוה = טוב)</p>",
-                    unsafe_allow_html=True)
+                st.markdown("<p style='text-align: center; font-weight: bold; color: #4a5c40;'>שכיבות סמיכה (גבוה = טוב)</p>", unsafe_allow_html=True)
                 fig2 = px.line(df, x='date', y='pushups', markers=True)
                 fig2.update_traces(line_color='#4a5c40', marker=dict(size=10, color='#4a5c40'))
-                fig2.update_layout(xaxis_title="תאריך", yaxis_title="חזרות", plot_bgcolor='rgba(0,0,0,0)',
-                                   paper_bgcolor='rgba(0,0,0,0)', margin=dict(l=0, r=0, t=10, b=0))
+                fig2.update_layout(xaxis_title="תאריך", yaxis_title="חזרות", plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', margin=dict(l=0, r=0, t=10, b=0))
                 st.plotly_chart(fig2, use_container_width=True)
 
         st.divider()
@@ -235,7 +222,10 @@ else:
             test_date = st.date_input("תאריך האימון", value=datetime.today())
             col1, col2 = st.columns(2)
             with col1:
-                run_time = st.text_input("זמן ריצה 3 ק״מ (למשל 15:40)")
+                if st.session_state.is_km:
+                    run_time = st.text_input("זמן הליכה 6 ק״מ (יעד: עד 66:00)")
+                else:
+                    run_time = st.text_input("זמן ריצה 3 ק״מ (למשל 15:40)")
             with col2:
                 pushups = st.number_input("שכיבות סמיכה (כמות)", min_value=0, max_value=100, step=1)
 
@@ -243,7 +233,7 @@ else:
 
         if submitted:
             if not run_time or ":" not in run_time:
-                st.error("נא להזין את זמן הריצה בפורמט תקין (למשל 14:30).")
+                st.error("נא להזין את הזמן בפורמט תקין (למשל 14:30 או 64:00).")
             else:
                 try:
                     minutes, seconds = map(int, run_time.split(':'))
@@ -251,42 +241,39 @@ else:
                     run_status = ""
                     pushups_status = ""
 
-                    if st.session_state.gender == "זכר":
-                        if total_seconds <= 750:
-                            run_status = "מצטיין 🏆"
-                        elif total_seconds <= 940:
-                            run_status = "עובר ✅"
+                    # בדיקת כ.מ (הליכה 6 ק"מ ב-66 דקות שהם 3960 שניות)
+                    if st.session_state.is_km:
+                        if total_seconds <= 3960:
+                            run_status = "עובר ✅ (כ.מ)"
                         else:
-                            run_status = "נכשל ❌"
-
-                        if pushups >= 36:
-                            pushups_status = "מצטיין 🏆"
-                        elif pushups >= 22:
-                            pushups_status = "עובר ✅"
-                        else:
-                            pushups_status = "נכשל ❌"
+                            run_status = "נכשל ❌ (כ.מ)"
+                    # בדיקת ריצה רגילה
                     else:
-                        if total_seconds <= 880:
-                            run_status = "מצטיינת 🏆"
-                        elif total_seconds <= 1180:
-                            run_status = "עובר ✅"
+                        if st.session_state.gender == "זכר":
+                            if total_seconds <= 750: run_status = "מצטיין 🏆"
+                            elif total_seconds <= 940: run_status = "עובר ✅"
+                            else: run_status = "נכשל ❌"
                         else:
-                            run_status = "נכשל ❌"
+                            if total_seconds <= 880: run_status = "מצטיינת 🏆"
+                            elif total_seconds <= 1180: run_status = "עובר ✅"
+                            else: run_status = "נכשל ❌"
 
-                        if pushups >= 30:
-                            pushups_status = "מצטיינת 🏆"
-                        elif pushups >= 11:
-                            pushups_status = "עובר ✅"
-                        else:
-                            pushups_status = "נכשל ❌"
+                    # שכיבות סמיכה - רף זהה לכולם לפי מגדר
+                    if st.session_state.gender == "זכר":
+                        if pushups >= 36: pushups_status = "מצטיין 🏆"
+                        elif pushups >= 22: pushups_status = "עובר ✅"
+                        else: pushups_status = "נכשל ❌"
+                    else:
+                        if pushups >= 30: pushups_status = "מצטיינת 🏆"
+                        elif pushups >= 11: pushups_status = "עובר ✅"
+                        else: pushups_status = "נכשל ❌"
 
-                    new_record = {"date": test_date.strftime("%Y-%m-%d"), "run_seconds": total_seconds,
-                                  "pushups": pushups}
+                    new_record = {"date": test_date.strftime("%Y-%m-%d"), "run_seconds": total_seconds, "pushups": pushups}
                     users[st.session_state.email]["history"].append(new_record)
                     save_users(users)
 
                     st.success("הנתונים נשמרו בהצלחה!")
-                    st.write(f"🏃 **סטטוס ריצה:** {run_status}")
+                    st.write(f"👟 **סטטוס אירובי:** {run_status}")
                     st.write(f"💪 **סטטוס שכיבות סמיכה:** {pushups_status}")
                     st.button("טען גרפים מחדש 🔄", on_click=st.rerun)
 
@@ -297,36 +284,27 @@ else:
         st.title("איך לשפר את זמני הריצה שלך? 🏃")
         st.write("ריצת 3 קילומטרים דורשת שילוב של מהירות, סיבולת לב-ריאה וחוסן מנטלי. הנה שיטות עבודה מוכחות:")
         st.subheader("1. אימוני אינטרוולים (הפוגות)")
-        st.info(
-            "מומלץ לשלב פעם בשבוע: רוצים לשפר מהירות? תרוצו מהר. רוצו 400 מטר בקצב גבוה (סביב 85% יכולת), ואז 200 מטר של הליכה קלה להתאוששות. חזרו על זה 6-8 פעמים.")
+        st.info("מומלץ לשלב פעם בשבוע: רוצים לשפר מהירות? תרוצו מהר. רוצו 400 מטר בקצב גבוה (סביב 85% יכולת), ואז 200 מטר של הליכה קלה להתאוששות. חזרו על זה 6-8 פעמים.")
         st.subheader("2. ריצת נפח (Zone 2)")
-        st.info(
-            "אימון אחד בשבוע צריך להיות מוקדש לריצה ארוכה ואיטית. המטרה היא לרוץ 5-7 קילומטרים בקצב שמאפשר לכם לנהל שיחה קלה. זה בונה את התשתית האירובית ומלמד את הגוף לייעל את צריכת החמצן.")
+        st.info("אימון אחד בשבוע צריך להיות מוקדש לריצה ארוכה ואיטית. המטרה היא לרוץ 5-7 קילומטרים בקצב שמאפשר לכם לנהל שיחה קלה. זה בונה את התשתית האירובית ומלמד את הגוף לייעל את צריכת החמצן.")
         st.subheader("3. חימום לפני הבוחן")
-        st.info(
-            "אל תזנקו מהמקום. 10 דקות לפני הזינוק בצעו ריצה קלה מאוד, ולאחריה מתיחות דינמיות כמו הנפות רגליים, מכרעים (לאנג'ים) וסיבובי אגן. זה מונע את תחושת ה'רגליים הכבדות' בקילומטר הראשון.")
+        st.info("אל תזנקו מהמקום. 10 דקות לפני הזינוק בצעו ריצה קלה מאוד, ולאחריה מתיחות דינמיות כמו הנפות רגליים, מכרעים (לאנג'ים) וסיבובי אגן. זה מונע את תחושת ה'רגליים הכבדות' בקילומטר הראשון.")
 
     elif page == "טיפים לשכיבות סמיכה 💪":
         st.title("תוכנית פעולה לשכיבות סמיכה 💪")
         st.write("הסוד בשכיבות סמיכה הוא עקביות וטכניקה נכונה. עבודה נכונה תמנע פציעות ותגדיל את כמות החזרות.")
         st.subheader("1. עבודה על השלב האקצנטרי (הירידה)")
-        st.success(
-            "השריר נבנה לא רק בדחיפה אלא גם בבלימה. נסו לרדת לקרקע בספירה איטית של 3 שניות, ולדחוף למעלה בשנייה אחת. אם קשה לכם לדחוף, רדו לאט לקרקע, ודחפו עם הברכיים.")
+        st.success("השריר נבנה לא רק בדחיפה אלא גם בבלימה. נסו לרדת לקרקע בספירה איטית של 3 שניות, ולדחוף למעלה בשנייה אחת. אם קשה לכם לדחוף, רדו לאט לקרקע, ודחפו עם הברכיים.")
         st.subheader("2. שיטת ה'Grease the Groove'")
-        st.success(
-            "במקום לעשות אימון אחד קורע פעם ביומיים, עשו סטים קטנים וקלים לאורך כל היום. למשל: כל פעם שנכנסים למגורים, עושים 5-10 שכיבות סמיכה. זה בונה חיבור עצבי חזק לשריר בלי לעייף אותו לחלוטין.")
+        st.success("במקום לעשות אימון אחד קורע פעם ביומיים, עשו סטים קטנים וקלים לאורך כל היום. למשל: כל פעם שנכנסים למגורים, עושים 5-10 שכיבות סמיכה. זה בונה חיבור עצבי חזק לשריר בלי לעייף אותו לחלוטין.")
         st.subheader("3. מיקום ידיים ומרפקים")
-        st.success(
-            "שמרו את המרפקים קרובים לגוף (בזווית של כ-45 מעלות). אל תפתחו אותם החוצה ל-90 מעלות – זה שם עומס מסוכן על הכתפיים. כיווץ ישבן ובטן ישמור על גב ישר כמו פלס וימנע בזבוז אנרגיה.")
+        st.success("שמרו את המרפקים קרובים לגוף (בזווית של כ-45 מעלות). אל תפתחו אותם החוצה ל-90 מעלות – זה שם עומס מסוכן על הכתפיים. כיווץ ישבן ובטן ישמור על גב ישר כמו פלס וימנע בזבוז אנרגיה.")
 
     elif page == "סרטוני הדרכה 🎥":
         st.title("סרטוני אימון וטכניקה 🎥")
         st.write("ריכזנו עבורכם סרטונים מומלצים שיעזרו לדייק את הטכניקה ולשפר תוצאות לקראת הבוחן:")
-        
         st.subheader("טכניקה תקנית לשכיבות סמיכה")
         st.video("https://www.youtube.com/watch?v=IODxDxX7oi4") 
-        
         st.divider()
-        
         st.subheader("דגשים לריצת 3 ק\"מ ושיפור טכניקת ריצה")
         st.video("https://www.youtube.com/watch?v=9L2b2khySLE")
