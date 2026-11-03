@@ -43,7 +43,7 @@ def login_form(cfg: Config):
         email = st.text_input(t("field_email"), key="login_email", autocomplete="username")
         password = st.text_input(t("field_password"), type="password", key="login_pass", autocomplete="current-password")
         honeypot = _honeypot("login")
-        submitted = st.form_submit_button(t("btn_login"), type="primary")
+        submitted = st.form_submit_button(t("btn_login"), type="primary", width="stretch", icon=":material/login:")
     if not submitted:
         return None
     # Order matters: everything cheap runs BEFORE the password hash (scrypt), so a flood costs almost nothing.
@@ -81,17 +81,20 @@ def login_form(cfg: Config):
 def register_form(cfg: Config):
     guards.issue_token(cfg, "register")
     st.caption(t("register_intro"))
+    if cfg.cohort_views:
+        with st.container(key="cadet_notice"):
+            st.write(t("cadet_view_notice"))                                  # told BEFORE the account exists
     with st.form("register"):
         name = st.text_input(t("field_name"), key="reg_name", max_chars=80)
         email = st.text_input(t("field_email"), key="reg_email", autocomplete="username")
         gender_label = st.selectbox(t("field_gender"), [t(k) for k in GENDERS], index=None,
                                     placeholder=t("choose_placeholder"), key="reg_gender")
         is_km = st.checkbox(t("field_km"), key="reg_km")
-        password = st.text_input(t("field_password"), type="password", key="reg_pass", autocomplete="new-password",
-                                 help=t("password_rule"))
+        password = st.text_input(t("field_password"), type="password", key="reg_pass", autocomplete="new-password")
+        st.caption(t("password_rule"))                       # the rule is visible BEFORE typing (not a hidden tooltip)
         confirm = st.text_input(t("field_password_confirm"), type="password", key="reg_pass2", autocomplete="new-password")
         honeypot = _honeypot("register")
-        submitted = st.form_submit_button(t("btn_register"), type="primary")
+        submitted = st.form_submit_button(t("btn_register"), type="primary", width="stretch", icon=":material/person_add:")
     if not submitted:
         return None
     ip, limiter = guards.client_ip(cfg), guards.limiter()
@@ -138,10 +141,10 @@ def password_change_form(cfg: Config, user: dict):
     st.write(t("pw_change_body"))
     with st.form("change_password"):
         current = st.text_input(t("field_password_current"), type="password", key="pw_current", autocomplete="current-password")
-        new = st.text_input(t("field_password_new"), type="password", key="pw_new", autocomplete="new-password",
-                            help=t("password_rule"))
+        new = st.text_input(t("field_password_new"), type="password", key="pw_new", autocomplete="new-password")
+        st.caption(t("password_rule"))
         confirm = st.text_input(t("field_password_confirm"), type="password", key="pw_new2", autocomplete="new-password")
-        submitted = st.form_submit_button(t("btn_change_password"), type="primary")
+        submitted = st.form_submit_button(t("btn_change_password"), type="primary", width="stretch")
     if not submitted:
         return None
     if new != confirm:

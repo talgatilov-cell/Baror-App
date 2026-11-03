@@ -19,9 +19,10 @@ def _startup(env_key: tuple):
 
 
 def _sign_in_page(cfg):
-    with st.container(key="signin"):          # the theme keys its dark sign-in look on this container (.st-key-signin)
+    with st.container(key="signin"):          # the stylesheet drops the bottom-bar padding while this container exists
+        st.html('<img class="brand-logo" src="app/static/logo.png" alt="" width="72" height="72">')
         st.title(t("app_title"))
-        st.write(t("app_tagline"))
+        st.caption(t("app_tagline"))
         tab_login, tab_register = st.tabs([t("login_title"), t("register_title")])
         with tab_login:
             user = auth_views.login_form(cfg)
@@ -55,5 +56,6 @@ def main() -> None:
 
 
 _icon = theme.ROOT / "logo.png"
-st.set_page_config(page_title=t("page_title"), page_icon=str(_icon) if _icon.exists() else None, layout="centered")
+st.set_page_config(page_title=t("page_title"), page_icon=str(_icon) if _icon.exists() else None, layout="centered",
+                   initial_sidebar_state="collapsed")
 boundary.run_app(main)            # expected errors -> Hebrew message; bugs -> generic message + incident id, never a traceback

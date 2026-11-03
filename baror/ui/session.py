@@ -26,6 +26,14 @@ def clear_cookie() -> None:
     st.html(f"<script>document.cookie='{COOKIE}=; Max-Age=0; Path=/';</script>", unsafe_allow_javascript=True)
 
 
+def sign_out_view(message_key: str) -> None:
+    """After ``end``: clear the cookie in THIS run, show the message and stop the script (never ``st.rerun``)."""
+    from baror.messages_he import t
+    clear_cookie()
+    st.text(t(message_key))
+    st.stop()
+
+
 def current_user(db_path, session_days: int):
     """The signed-in user for this run, or None. Falls back to the cookie on a fresh session (reload, restart)."""
     token = st.session_state.get(TOKEN_KEY)

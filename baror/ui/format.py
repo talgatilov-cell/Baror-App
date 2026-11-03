@@ -38,3 +38,15 @@ def graded_lines(graded: list[Graded]) -> list[str]:
 
 def time_text(tenths) -> str:
     return "" if tenths is None else format_deciseconds(tenths)
+
+
+def thresholds_for(user: dict, on, test: str):
+    """The (pass_limit, excellent_limit | None) of one test for this user on a date, in display units (tenths of a
+    second for run/walk, repetitions for push-ups); None when the sex is unknown or no rule applies."""
+    from baror.domain import scoring
+    metric = {"run": scoring.Metric.RUN_3KM, "walk": scoring.Metric.WALK_6KM, "pushups": scoring.Metric.PUSHUPS}[test]
+    try:
+        th = scoring.current_ruleset(on).get(metric, scoring.Sex.from_code(user["gender"]))
+    except scoring.DomainError:
+        return None
+    return th.pass_limit, th.excellent_limit

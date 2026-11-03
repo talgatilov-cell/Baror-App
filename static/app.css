@@ -1,0 +1,243 @@
+/* Baror App stylesheet (the ONLY custom CSS; loaded once per run by baror/ui/theme.py).
+
+   Rules (CLAUDE.md): logical properties only (inline/block, start/end); selectors are the documented .st-key-NAME hook
+   plus the data-testid attributes listed below, so a Streamlit upgrade can re-check them in one place:
+     stElementContainer stSidebar stHeader stMainBlockContainer stMetric stButton stNumberInput stTextInput stDateInput
+     stButtonGroup stExpander stPlotlyChart stVerticalBlock stHorizontalBlock stColumn stNumberInputContainer
+     stDateInputField stTextInputRootElement
+   No hashed emotion classes. No !important: overrides win by specificity (the .stApp prefix) or source order, because
+   this sheet is injected after Streamlit's own.
+
+   Design tokens (mirrored in .streamlit/config.toml; tests/test_design_tokens.py computes every pair below):
+     --bg #f6f4ec sand       --bg2 #e9e5d4 input        --ink #1f2a1a text      --muted #454e40 caption
+     --olive #4a5c40 primary --olive-dark #3b4a33 pressed   --line #6f7a68 control border (>= 3:1)
+     --danger #a4262c on --danger-bg #f9e1e0     --good #245c2b on --good-bg #dfeedb     --warn #7a4600 on --warn-bg #fbebc8
+   Spacing: 4 px steps (.25rem); gaps between controls 8 px (.5rem). Radius .75rem. Touch target --tap 48 px.
+   Type scale: caption .875rem, body 1rem, read-back 1.125rem, h3 1.125rem, h2 1.375rem, h1 1.75rem (config.toml).
+   COMPONENTS (each is built from native Streamlit elements plus one keyed container; states are Streamlit's own):
+     status badge   baror/ui/components.py status_badge(level): :green-badge excellent (icon military_tech) and pass
+                    (check_circle), :orange-badge fail (flag), :gray-badge not graded. Icon + word, never colour alone.
+     target chip    components.target_chips: pill, 1 px --line border, .875rem; the excellent chip uses --good-bg/--good.
+                    Shown under the input BEFORE entry ("pass: up to 15:40").
+     KPI tile       st.metric(border=True) inside .st-key-kpis: three equal tiles (columns, wrap=False), value 1.375rem,
+                    delta arrow + number, red/green only as a second cue. Never more than three.
+     result card    .st-key-result_card = st.container(border=True): heading, one block per test (value + badge +
+                    gap sentence + change against the previous test + personal-best badge), then two buttons.
+     field error    components.field_error: .field-error pill, role=alert, drawn next to the field, input kept.
+     cohort card    st.container(border=True) per cadet or platoon (staff screens): name via st.text, one row per test.
+     top bar        .st-key-top_bar (shell): original logo 40 px + app name on the start side, 'יציאה' button (48 px, logout
+                    icon) on the end side; opaque sand; on EVERY signed-in page; never a bottom-bar destination.
+     drop-down      personal._picker: st.selectbox with filter_mode=None (select-only: the input carries inputmode none, so no
+                    on-screen keyboard); options 48 px; empty placeholder until chosen; range from the domain's bounds.
+     chart card     [class*="st-key-chart_card"]: white card, 1 px --line border; progress line chart (cadet) and the platoon
+                    stacked bars (chief). Bars: --good #245c2b / #4f7d43 / #9a5b00 with white counts inside (7.95/4.83/5.43),
+                    legend in words, hidden group = empty row + text; the table in an expander is the text alternative.
+     cadet row      st.container(border=True) keyed cadet_N / chief_row_N: name (st.text, heading weight), gender caption,
+                    one row per test (value, date, badge), accommodation marker; chief rows open INLINE (accordion, one at
+                    a time): button 'הצגת פרטים' / 'סגירת הפרטים'.
+     record row     accom.record_row: kind badge + scope, dates + status badge, note (st.text), SOURCE badge. States: active
+                    (green), upcoming (orange), expired (gray); pending deletion adds an orange 'ממתין לאישור ראש הקורס'.
+     source badge   orange + person icon = entered by the cadet (staff must check it); gray + verified icon = entered by
+                    staff. Never colour alone: the words 'הוזן על ידי ...' are in the badge.
+     page card      [data-testid="stMainBlockContainer"]: sand at 94% over the camouflage picture, 15 px radius, soft shadow.
+     bottom bar     .st-key-bottom_nav: fixed segmented control, 56 px items, icon above the noun label, safe-area inset.
+   Buttons: primary = olive, full width, 48 px; secondary = bordered; tertiary = text link style (min 48 px).
+   Audit (this file): no colour literal outside :root except the chart colours in baror/ui/charts.py (Plotly cannot read
+   CSS variables); spacing uses the 4 px rem scale; no hashed classes; no !important. */
+
+:root{
+  --bg:#f6f4ec; --bg2:#e9e5d4; --ink:#1f2a1a; --muted:#454e40; --line:#6f7a68;
+  --olive:#4a5c40; --olive-dark:#3b4a33;
+  --danger:#a4262c; --danger-bg:#f9e1e0;
+  --good:#245c2b;   --good-bg:#dfeedb;
+  --warn:#7a4600;   --warn-bg:#fbebc8;
+  --danger-dark:#8a1f25;                   /* hover of the destructive button (white on it 9.12) */
+  --good-ink:#1b4a21;                      /* text on the excellent chip (on --good-bg) */
+  --surface:#ffffff;                       /* chart card and plot area */
+  --on-olive:#ffffff;                      /* text on olive */
+  --radius:.75rem; --tap:48px; --gap:.5rem;
+}
+
+/* ---- right-to-left foundation -------------------------------------------------------------------------------- */
+html{direction:rtl}                                      /* safety net if the language script is blocked */
+[data-testid="stElementContainer"]{text-align:start}     /* markdown and titles stay start-aligned (right) in RTL */
+.st-key-rtl_boot{display:none}                           /* the script-only st.html wrapper: has run, takes no space */
+
+/* ---- page frame ---------------------------------------------------------------------------------------------- */
+[data-testid="stHeader"]{background:transparent}
+[data-testid="stMainBlockContainer"]{
+  padding-block:1rem calc(var(--tap) + 3.25rem + env(safe-area-inset-bottom));   /* room for the fixed bottom bar */
+  padding-inline:1rem;
+}
+.stApp:has(.st-key-signin) [data-testid="stMainBlockContainer"]{padding-block-end:2rem}   /* no bottom bar when signed out */
+
+/* ---- 48 px touch targets ------------------------------------------------------------------------------------- */
+.stButton button,.stFormSubmitButton button,.stDownloadButton button{min-height:var(--tap);font-weight:700}
+[data-testid="stNumberInputContainer"],[data-testid="stDateInputField"],[data-testid="stTextInputRootElement"]{
+  min-height:var(--tap); box-sizing:border-box}          /* the VISIBLE box, not only the inner input element */
+[data-testid="stNumberInput"] input,[data-testid="stTextInput"] input,[data-testid="stDateInput"] input{
+  min-height:var(--tap); font-size:1rem}                 /* 16 px: iOS Safari does not zoom the page on focus */
+/* The date box is typed into (day / month / year segments, numeric keypad); tapping the box does NOT open the picker.
+   The calendar button opens it, so that button is the 48 px target (it was 24 x 16). */
+[data-testid="stDateInputCalendarButton"]{min-width:var(--tap); min-height:var(--tap); display:inline-flex;
+  align-items:center; justify-content:center}
+[data-testid="stDateInput"] [role="group"]{direction:ltr}                     /* 02/11/2026 reads left to right */
+/* minutes, seconds and push-ups are chosen from select-only drop-downs (no typing, no on-screen keyboard) */
+/* ---- other controls that were under 48 px (measured at 390 px) ------------------------------------------------- */
+[role="tab"]{min-height:var(--tap); padding-inline:1rem}                                  /* sign-in / register tabs */
+[data-testid="stTextInputRootElement"] button{min-width:var(--tap); min-height:var(--tap)} /* show-password toggle */
+[data-testid="stSelectbox"] [role="group"]{min-height:var(--tap); box-sizing:border-box}   /* the visible select box */
+[data-testid="stSelectbox"] button,[data-testid="stSelectbox"] input{min-height:var(--tap)}   /* its open arrow and text part */
+[data-testid="stSelectbox"] button{min-width:var(--tap)}
+[data-testid="stCheckbox"] label{min-height:var(--tap); align-items:center}               /* the label row is the target */
+[data-testid="stDialog"] button[aria-label="Close"]{min-width:var(--tap); min-height:var(--tap)}
+
+/* ---- focus (WCAG 2.4.7): keep a visible ring on everything we restyle ---------------------------------------- */
+.stApp button:focus-visible,.stApp input:focus-visible{outline:3px solid var(--olive-dark); outline-offset:2px}
+
+/* ---- bottom navigation: fixed, safe-area aware, centred on wide screens -------------------------------------- */
+.st-key-bottom_nav{
+  position:fixed; inset-inline:0; bottom:0; z-index:999;
+  box-sizing:border-box; width:100%; max-width:46rem; margin-inline:auto;
+  background:var(--bg); border-block-start:1px solid var(--line);
+  padding:.5rem 1rem calc(.5rem + env(safe-area-inset-bottom));
+}
+.st-key-bottom_nav [data-testid="stButtonGroup"]{box-sizing:border-box; padding-inline:2px}
+.st-key-bottom_nav button[data-variant="segmented_control"]{min-height:56px}
+.st-key-bottom_nav button[data-variant="segmented_control"] span:has(> span > [data-testid="stIconMaterial"]){
+  flex-direction:column; align-items:center; gap:.125rem}
+.st-key-bottom_nav button[data-variant="segmented_control"] p{font-size:.8125rem; line-height:1.2}
+
+/* ---- segmented controls: equal-width, separate, fully rounded items ------------------------------------------ */
+[data-testid="stButtonGroup"] div:has(> button[data-variant="segmented_control"]){flex-wrap:nowrap; width:100%; gap:.25rem}
+button[data-variant="segmented_control"]{flex:1 1 0; min-width:0; min-height:var(--tap); padding-inline:.25rem}
+/* Streamlit rounds the first/last item physically and makes the border of the neighbour of the selected item
+   transparent on one PHYSICAL side (an LTR assumption), so in RTL one end of the bar lost its edge. Those rules have a
+   higher specificity than anything reasonable here, so the visible edge is drawn with an inset box-shadow instead,
+   which none of them touches (a transparent border stays as the layout spacer). */
+.stApp [data-testid="stButtonGroup"] button[data-variant="segmented_control"]{
+  margin:0; border-radius:var(--radius); border:1px solid transparent; background:var(--bg);
+  box-shadow:inset 0 0 0 1px var(--line)}
+.stApp [data-testid="stButtonGroup"] button[data-variant="segmented_control"][data-selected="true"]{
+  background:var(--olive); color:var(--on-olive); box-shadow:inset 0 0 0 1px var(--olive-dark)}
+.stApp [data-testid="stButtonGroup"] button[data-variant="segmented_control"][data-selected="true"] p,
+.stApp [data-testid="stButtonGroup"] button[data-variant="segmented_control"][data-selected="true"] span{color:var(--on-olive); font-weight:700}
+
+/* heading anchor links (16 px, not a useful control on a phone) */
+[data-testid="stHeaderActionElements"]{display:none}
+
+/* ---- KPI tiles: three equal tiles, stacked min-width removed so three fit 358 px ----------------------------- */
+[class*="st-key-kpis"] [data-testid="stHorizontalBlock"]{align-items:stretch}
+[class*="st-key-kpis"] [data-testid="stColumn"]{min-width:0; display:flex; flex-direction:column}
+[class*="st-key-kpis"] [data-testid="stColumn"] > *,[class*="st-key-kpis"] [data-testid="stElementContainer"],[class*="st-key-kpis"] [data-testid="stMetric"]{
+  flex:1 1 auto; height:100%}
+[class*="st-key-kpis"] [data-testid="stMetric"]{min-height:6.5rem; box-sizing:border-box}
+[class*="st-key-kpis"] [data-testid="stMetricLabel"],[class*="st-key-kpis"] [data-testid="stMetricLabel"] *{
+  white-space:normal; overflow:visible; text-overflow:clip}              /* "ריצה אחרונה" wraps instead of being cut inside a card */
+[class*="st-key-kpis"] [data-testid="stMetricValue"]{font-size:1.375rem}          /* 14:24 plus tenths must fit a 114 px tile */
+
+/* ---- target chips, read-back, field errors (static trusted markup from baror/ui/components.py) --------------- */
+.chips{display:flex; flex-wrap:wrap; gap:var(--gap); margin-block-start:.25rem}
+.chip{display:inline-block; padding:.25rem .75rem; border-radius:999px; border:1px solid var(--line);
+  background:var(--bg); color:var(--ink); font-size:.875rem}
+.chip-exc{background:var(--good-bg); border-color:var(--good); color:var(--good-ink)}
+.readback{margin:0; font-size:1.125rem; font-weight:700; color:var(--olive)}
+.readback-empty{font-weight:400; font-size:.9375rem; color:var(--muted)}
+.field-error{display:flex; align-items:center; gap:.5rem; margin:0; padding:.5rem .75rem;
+  border-radius:var(--radius); background:var(--danger-bg); color:var(--danger); font-weight:600; font-size:.9375rem}
+.field-error::before{content:"!"; flex:none; inline-size:1.25rem; block-size:1.25rem; border-radius:50%;
+  background:var(--danger); color:var(--on-olive); text-align:center; line-height:1.25rem; font-weight:800; font-size:.8125rem}
+.brand-logo{display:block; margin-block-end:.5rem}
+
+/* Streamlit draws captions at 60% opacity (about 3.96:1 on sand, below 4.5): use the --muted ink at full opacity */
+[data-testid="stCaptionContainer"]{color:var(--muted); opacity:1}
+
+/* notice box (instructor-view notice to cadets): sand tone with an olive edge, same family as the staff banner */
+.st-key-cadet_notice{padding:.75rem 1rem; border-radius:var(--radius); background:var(--bg2); border-inline-start:4px solid var(--olive)}
+.st-key-cadet_notice p{margin:0; color:var(--ink)}
+
+/* ---- cards ------------------------------------------------------------------------------------------------- */
+.st-key-status_rows{gap:.25rem}
+
+/* ---- sign-in: one quiet column on the sand background (the camouflage backdrop of the first version is gone) --- */
+.st-key-signin{padding-block-start:1rem}
+
+/* honeypot (abuse control, tests/test_abuse_limits.py): off-screen, never display:none (a script fills it either way) */
+.stApp .st-key-hp_login,.stApp .st-key-hp_register{
+  position:absolute; inset-inline-start:-10000px; inline-size:1px; block-size:1px; overflow:hidden}
+
+/* ---- staff ---------------------------------------------------------------------------------------------------- */
+/* (the 48 px selectbox box and its clear / open buttons come from the global [data-testid="stSelectbox"] rules above) */
+/* one card per cadet / per platoon; in 1.66 a bordered container IS a stVerticalBlock carrying the key class */
+.st-key-staff_cards,.st-key-chief_cards{gap:var(--gap)}
+.st-key-staff_cards [class*="st-key-cadet_"]{gap:var(--gap)}              /* tighter than the 16 px default inside a card */
+/* the name is st.text (never HTML), the FIRST-LEVEL text of a card, styled as its heading; a note inside a record is not */
+[class*="st-key-cadet_"] > [data-testid="stElementContainer"] > [data-testid="stText"],
+[class*="st-key-chief_row_"] > [data-testid="stElementContainer"] > [data-testid="stText"],
+[class*="st-key-pending_"] > [data-testid="stElementContainer"] > [data-testid="stText"]{font-weight:800; font-size:1.125rem}
+.st-key-staff_banner{box-sizing:border-box; min-height:3rem; padding:.75rem 1rem; border-radius:var(--radius);
+  background:var(--bg2); border-inline-start:4px solid var(--olive)}
+.st-key-staff_banner > *,.st-key-staff_banner [data-testid="stMarkdown"]{flex:none; height:auto}   /* the flex column squeezed its children to 10 px at 1366 wide */
+.st-key-staff_banner p{margin:0; color:var(--ink)}
+
+/* ---- charts and content ---- */
+/* The chart sits on a white card: the plot background is opaque white (contrast of the lines is computed against it). */
+[class*="st-key-chart_card"]{border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; background:var(--surface)}
+/* expander header and link buttons are touch targets as well */
+[data-testid="stExpander"] summary{min-height:var(--tap)}
+[data-testid="stLinkButton"] a{min-height:var(--tap); box-sizing:border-box}
+/* tip and video cards: tighter rhythm inside the card (heading, bullets, table) */
+.st-key-week_card table{width:100%}
+.st-key-week_card th,.st-key-week_card td{text-align:start}
+
+/* ---- accessibility and critique fixes ---- */
+/* Dialogs (st.dialog) are drawn in a portal OUTSIDE .stApp, so rules that must reach them carry no .stApp prefix.
+   Contrast (WCAG 1.4.3). Streamlit draws placeholders, table headers and date separators at 60% ink (3.8 to 4.0:1);
+   these use solid colours from the tokens: placeholder #5a6454 on the input background 4.91, --muted on sand 7.89,
+   --muted on the input background 6.88. */
+[data-testid] input::placeholder,[data-testid] textarea::placeholder{color:#5a6454; opacity:1}
+.stApp [data-testid="stTable"] th{color:var(--muted)}
+[data-testid="stDateInput"] [role="group"] > span:not([role="spinbutton"]){color:var(--muted)}
+/* st.warning (zero push-ups, duplicate result): Streamlit's yellow is 4.35:1; the tokens give --warn on --warn-bg 6.59 */
+[data-testid="stAlertContainer"]:has([data-testid="stAlertContentWarning"]){background-color:var(--warn-bg)}
+[data-testid="stAlertContentWarning"],[data-testid="stAlertContentWarning"] *{color:var(--warn)}
+/* Target size (WCAG 2.5.8, 48 px here): the clear button of a filled number input is 24 x 16 by default */
+[data-testid="stNumberInput"] button[aria-label="Clear value"]{min-width:var(--tap); min-height:var(--tap)}
+/* Hierarchy: a heading inside a dialog is drawn at 12 px (smaller than the text below it); use the h3 size of the theme */
+[role="dialog"] div h3{font-size:1.125rem}      /* (0,1,2) beats the theme rule .cache h3 (0,1,1) */
+/* Clarity: destructive actions use the existing danger token instead of the neutral or primary look
+   (white on --danger 7.26, --danger on sand 6.59 for text and for the 3:1 border) */
+.stApp .st-key-delete_account button{color:var(--danger); border-color:var(--danger)}
+[role="dialog"] .st-key-del_acct_ok button,[role="dialog"] [class*="st-key-del_ok_"] button{
+  background-color:var(--danger); border-color:var(--danger); color:var(--on-olive)}
+[role="dialog"] .st-key-del_acct_ok button p,[role="dialog"] [class*="st-key-del_ok_"] button p{color:var(--on-olive)}
+[role="dialog"] .st-key-del_acct_ok button:hover,[role="dialog"] [class*="st-key-del_ok_"] button:hover{
+  background-color:var(--danger-dark); border-color:var(--danger-dark)}
+
+/* ---- round 2 ------------------------------------------------------------------------------------------------- */
+/* top bar on every signed-in page: app name on the start side, sign-out on the end side */
+.st-key-top_bar{background:var(--bg); border-radius:var(--radius); padding:.5rem; margin-block-end:.5rem}   /* opaque sand */
+.brandbar{display:flex; align-items:center; gap:.5rem; font-weight:800; font-size:1.125rem; color:var(--ink)}
+.st-key-top_bar .stButton button{min-height:var(--tap)}
+/* tables (st.table): Streamlit left-aligns the body cells; in RTL every cell starts on the right and the first column
+   is the rightmost (the header row already is) */
+[data-testid="stTable"] table{width:100%}
+[data-testid="stTable"] th,[data-testid="stTable"] td{text-align:start}
+/* bullet lists: the markers hang inside the start padding (they touched the card border in RTL) */
+[data-testid="stMarkdownContainer"] ul,[data-testid="stMarkdownContainer"] ol{padding-inline:1.25rem 0; margin-inline:0}
+
+/* background: the original camouflage picture, served as a static file (never base64, never re-sent with the page), on a
+   fixed layer BEHIND everything (background-attachment:fixed is ignored by iOS Safari). No text sits on the picture: all
+   content is inside the light card below. */
+.stApp,[data-testid="stAppViewContainer"],[data-testid="stMain"]{background:transparent}
+.stApp::before{content:""; position:fixed; inset:0; z-index:-1; background:center / cover no-repeat url(app/static/image_bea22f.jpg)}
+/* the content card: sand at 94% (worst case, a pure white or pure black pixel behind it, keeps every text pair above
+   4.5:1: tests/test_design_tokens.py computes it), 15 px radius, soft shadow as in the original app */
+[data-testid="stMainBlockContainer"]{
+  background:rgba(246,244,236,.94); border-radius:15px; box-shadow:0 4px 20px rgba(0,0,0,.3);
+  box-sizing:border-box; width:calc(100% - 1rem); margin-block:.75rem; margin-inline:auto}
+
+.brandbar img{border-radius:.5rem}
+.brand-logo{border-radius:var(--radius)}
+/* drop-down options (rendered in a portal, hence no .stApp prefix): each choice is a 48 px target */
+[role="listbox"] [role="option"]{min-height:var(--tap); box-sizing:border-box; align-items:center}

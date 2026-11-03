@@ -1,10 +1,49 @@
+# Baror App. Design tokens live HERE (Streamlit theme) and in static/app.css (:root custom properties); keep both in step.
+# Every colour pair that carries text or a control is listed with its computed contrast in docs-free form in
+# tests/test_design_tokens.py (WCAG relative luminance: text >= 4.5, interface parts >= 3).
 [client]
-toolbarMode = "minimal"
-showErrorDetails = "none"
+toolbarMode = "minimal"          # no Deploy button, no main menu
+showErrorDetails = "none"        # no tracebacks to cadets
 
 [server]
-enableStaticServing = true
+enableStaticServing = true       # serves ./static at app/static/ (font, logo, stylesheet assets)
 enableXsrfProtection = true
 
 [browser]
 gatherUsageStats = false
+
+[theme]
+base = "light"
+primaryColor = "#4a5c40"             # olive: buttons, selected states (white on it 7.25)
+backgroundColor = "#f6f4ec"          # sand
+secondaryBackgroundColor = "#e9e5d4" # input background
+textColor = "#1f2a1a"
+font = "Heebo, sans-serif"
+baseRadius = "0.75rem"
+buttonRadius = "0.75rem"
+borderColor = "#6f7a68"              # control borders: 4.09 on sand, 3.57 on input background (>= 3)
+showWidgetBorder = true
+metricValueFontSize = "1.625rem"
+headingFontSizes = ["1.75rem", "1.375rem", "1.125rem"]
+headingFontWeights = [800, 700, 700]
+linkColor = "#2f4a6b"
+redColor = "#a4262c"
+redTextColor = "#a4262c"
+redBackgroundColor = "#f9e1e0"
+greenColor = "#2e6b34"
+greenTextColor = "#245c2b"
+greenBackgroundColor = "#dfeedb"
+orangeColor = "#b36b00"
+orangeTextColor = "#7a4600"
+orangeBackgroundColor = "#fbebc8"
+grayColor = "#5a6454"
+grayTextColor = "#454e40"
+grayBackgroundColor = "#e2dfce"
+
+# Heebo (SIL OFL 1.1, licence in static/fonts/OFL.txt), variable weight 100-900, subset to Latin + Hebrew + punctuation.
+# Self-hosted: no visitor address is sent to a font provider.
+[[theme.fontFaces]]
+family = "Heebo"
+url = "app/static/fonts/Heebo-VF-subset.woff"
+weight = "100 900"
+style = "normal"

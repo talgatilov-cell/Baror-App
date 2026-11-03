@@ -31,9 +31,10 @@ RUN groupadd --gid 10001 baror \
  && chown 10001:10001 /data
 COPY --from=builder /opt/venv /opt/venv
 WORKDIR /app
-# The REAL layout (there is no static/ directory yet). scripts/healthcheck.py (T8) is what the HEALTHCHECK below runs.
+# The REAL layout (static/ holds the stylesheet, the logo and the self-hosted font). scripts/healthcheck.py (T8) is what the HEALTHCHECK below runs.
 COPY --chown=10001:10001 app.py logo.png image_bea22f.jpg ./
 COPY --chown=10001:10001 baror/ ./baror/
+COPY --chown=10001:10001 static/ ./static/
 COPY --chown=10001:10001 scripts/ ./scripts/
 COPY --chown=10001:10001 .streamlit/ ./.streamlit/
 USER 10001:10001

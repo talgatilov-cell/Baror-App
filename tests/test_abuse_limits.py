@@ -126,7 +126,7 @@ class IpLimitWired(AppCase):
         at = self.attempt(email="dana@example.com", pw=PW)                 # even the RIGHT password is refused now
         self.assertEqual(self.hashes(), done, "a blocked attempt must not cost a scrypt")
         self.assertIn(ERRORS["RATE_LIMITED"].title, at.error[0].value)
-        self.assertFalse(at.sidebar.radio)
+        self.assertFalse(self.in_app(at))
         self.assertEqual(self.set_cookie.call_count, 0)
 
     def test_the_message_is_the_same_whatever_the_account(self):
@@ -141,7 +141,7 @@ class IpLimitWired(AppCase):
         for i in range(LOGIN_LIMIT + 1):
             self.attempt(email=f"user{i}@example.com")
         at = self.attempt(email="dana@example.com", pw=PW, ip="198.51.100.20")
-        self.assertTrue(at.sidebar.radio)
+        self.assertTrue(self.in_app(at))
 
     def test_a_spoofed_header_does_not_dodge_the_limit_when_no_proxy_is_trusted(self):
         for i in range(LOGIN_LIMIT + 1):
@@ -155,12 +155,12 @@ class IpLimitWired(AppCase):
             self.attempt(email=f"user{i}@example.com", ip="172.18.0.1", xff="203.0.113.5")
         self.assertIn(ERRORS["RATE_LIMITED"].title,
                       self.attempt(pw=PW, ip="172.18.0.1", xff="203.0.113.5").error[0].value)
-        self.assertTrue(self.attempt(pw=PW, ip="172.18.0.1", xff="203.0.113.6").sidebar.radio,
+        self.assertTrue(self.in_app(self.attempt(pw=PW, ip="172.18.0.1", xff="203.0.113.6")),
                         "another client behind the same proxy is unaffected")
 
     def test_successful_sign_ins_do_not_count_against_the_address(self):
         for _ in range(80):
-            self.assertTrue(self.attempt(pw=PW).sidebar.radio)
+            self.assertTrue(self.in_app(self.attempt(pw=PW)))
 
     def test_a_platoon_behind_one_address_is_never_locked_out(self):
         """45 cadets on one NAT address: each registers, makes one typo, signs in. Nobody is refused."""
@@ -169,13 +169,13 @@ class IpLimitWired(AppCase):
             allowlist.add_entry(self.path, f"c{i}@example.com")
         for i in range(45):
             with mock.patch.object(st, "context", ctx(ip="203.0.113.9")):
-                at = self.register(f"c{i}@example.com", name=f"Cadet {i}", gender="gender_male", password=PW)
+                at = self.register(f"c{i}@example.com", name="Cadet " + chr(ord("A") + i % 26) + chr(ord("A") + i // 26), gender="gender_male", password=PW)
             self.assertFalse(at.error, f"cadet {i} was refused at registration")
         for i in range(45):
             bad = self.attempt(email=f"c{i}@example.com", pw="typo")
             self.assertEqual(ERRORS["AUTH_FAILED"].title in bad.error[0].value, True, f"cadet {i}")
             good = self.attempt(email=f"c{i}@example.com", pw=PW)
-            self.assertTrue(good.sidebar.radio, f"cadet {i} could not sign in after one typo")
+            self.assertTrue(self.in_app(good), f"cadet {i} could not sign in after one typo")
         self.assertEqual(pid, 0)
 
     def test_registration_attempts_are_limited_per_address_before_hashing(self):
@@ -232,10 +232,10 @@ class BotCheckWired(AppCase):
         at = self.submit(at)
         self.assertEqual(at.error[0].value, t("bot_check_failed"))
         self.assertEqual(self.login.call_count, 0, "refused before the password hash")
-        self.assertFalse(at.sidebar.radio)
+        self.assertFalse(self.in_app(at))
         self.clock[0] += 5                                   # the token was renewed at the refusal: wait out its minimum
         at = self.submit(at)
-        self.assertTrue(at.sidebar.radio)
+        self.assertTrue(self.in_app(at))
         self.assertEqual(self.login.call_count, 1)
 
     def test_a_filled_honeypot_is_refused_even_with_the_right_password_and_plenty_of_time(self):
@@ -244,7 +244,7 @@ class BotCheckWired(AppCase):
         at = self.submit(at, honeypot="http://spam.example")
         self.assertEqual(at.error[0].value, t("bot_check_failed"))
         self.assertEqual(self.login.call_count, 0)
-        self.assertFalse(at.sidebar.radio)
+        self.assertFalse(self.in_app(at))
 
     def test_the_refusal_text_does_not_say_which_check_failed(self):
         a = self.open(); self.clock[0] += 0.1; texts_fast = self.submit(a).error[0].value
@@ -261,7 +261,7 @@ class BotCheckWired(AppCase):
         at = self.submit(at, pw=PW)                          # new token issued just now: still inside the minimum
         self.assertEqual(at.error[0].value, t("bot_check_failed"))
         self.clock[0] += 3
-        self.assertTrue(self.submit(at, pw=PW).sidebar.radio)
+        self.assertTrue(self.in_app(self.submit(at, pw=PW)))
 
     def test_a_token_expires_after_an_hour_and_the_form_recovers(self):
         at = self.open()
@@ -269,7 +269,7 @@ class BotCheckWired(AppCase):
         at = self.submit(at)
         self.assertEqual(at.error[0].value, t("bot_check_failed"))
         self.clock[0] += 3
-        self.assertTrue(self.submit(at).sidebar.radio)
+        self.assertTrue(self.in_app(self.submit(at)))
 
     def test_a_token_belongs_to_one_browser_session(self):
         a, b = self.open(), self.open()
@@ -310,9 +310,9 @@ class BotCheckWired(AppCase):
 
     def test_the_honeypot_is_hidden_by_css_and_labelled(self):
         from baror.ui import theme
-        self.assertIn(".st-key-hp_login", theme._CSS)
-        self.assertIn(".st-key-hp_register", theme._CSS)
-        self.assertIn("-10000px", theme._CSS)
+        self.assertIn(".st-key-hp_login", theme.css_text())
+        self.assertIn(".st-key-hp_register", theme.css_text())
+        self.assertIn("-10000px", theme.css_text())
 
 
 if __name__ == "__main__":

@@ -47,10 +47,11 @@ class Dockerfile(unittest.TestCase):
 
     def test_everything_the_app_needs_at_run_time_is_copied(self):
         copied = " ".join(l for l in self.lines if l.startswith("COPY "))
-        for needed in ("app.py", "logo.png", "image_bea22f.jpg", "baror/", "scripts/", ".streamlit/", "requirements.lock"):
+        for needed in ("app.py", "logo.png", "image_bea22f.jpg", "baror/", "static/", "scripts/", ".streamlit/", "requirements.lock"):
             self.assertIn(needed, copied, needed)
         self.assertTrue((ROOT / "baror" / "domain" / "thresholds.json").exists(), "shipped inside baror/")
-        self.assertNotIn("static/", copied, "there is no static/ directory yet")
+        for asset in ("static/app.css", "static/image_bea22f.jpg", "static/logo.png", "static/fonts/Heebo-VF-subset.woff", "static/fonts/OFL.txt"):
+            self.assertTrue((ROOT / asset).exists(), f"{asset} is served by the app and the font licence must stay with it")
 
     def test_hash_checked_install_only(self):
         run = " ".join(self.lines)

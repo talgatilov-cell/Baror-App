@@ -24,7 +24,7 @@ class BugsNeverReachThePage(AppCase):
         self.cadet()
         at = self.sign_in()
         secret = "secret-xyz password=hunter2 token=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-        with mock.patch.object(personal, "personal_page", side_effect=RuntimeError(secret)), \
+        with mock.patch.object(personal, "summary_page", side_effect=RuntimeError(secret)), \
                 self.assertLogs("baror", level="ERROR") as logs:
             at.run()
         self.assertFalse(at.exception, "no Streamlit exception element: the boundary caught it")
@@ -41,7 +41,7 @@ class BugsNeverReachThePage(AppCase):
         self.assertNotIn("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", record)
 
     def test_stop_and_rerun_still_pass_through_the_boundary(self):
-        at = self.signed_in()
+        at = self.profile(self.signed_in())                    # sign-out lives on More -> Profile
         btn(at, t("btn_logout")).click()
         at.run()
         self.assertFalse(at.exception)
@@ -115,6 +115,7 @@ class AuditEventsCarryNoSecrets(AppCase):
         token = self.set_cookie.call_args.args[0]
         self.register("unlisted@example.com", gender="gender_male", password="a secret pw 123")
         self.register("noa@example.com", gender="gender_female", password="another secret 99")
+        at = self.profile(at)
         btn(at, t("btn_logout")).click()
         at.run()
 
