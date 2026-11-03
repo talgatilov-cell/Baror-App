@@ -42,6 +42,7 @@ def sign_out(cfg: Config, user: dict, message_key: str = "logged_out") -> None:
     """Revoke this session, clear the cookie in this run, say so, and stop (no rerun)."""
     log_event("logout", user_id=user["id"])
     session.end(cfg.db_path)
+    st.html("<style>.st-key-top_bar{display:none}</style>")        # static: the signed-out view has no top bar
     session.sign_out_view(message_key)
 
 
