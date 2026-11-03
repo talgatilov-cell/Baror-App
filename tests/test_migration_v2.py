@@ -1,4 +1,4 @@
-"""Schema v1 -> v2 upgrade of a populated database (table rebuild per SQLite's documented 12-step procedure)."""
+"""Schema v1 -> v2 upgrade (each step is run with target_version=2; v3 has its own module) of a populated database (table rebuild per SQLite's documented 12-step procedure)."""
 import os
 import sqlite3
 import subprocess
@@ -55,27 +55,28 @@ class V1ToV2(unittest.TestCase):
 
     def test_upgrade_keeps_every_row_byte_for_byte(self):
         self.assertEqual(db.user_version(self.path), 1)
-        self.assertEqual(db.init_db(self.path), 2)
+        self.assertEqual(db.init_db(self.path, target_version=2), 2)
         self.assertEqual(snapshot(self.path), self.before)
         self.assertEqual(len(self.before[0]), 3); self.assertEqual(len(self.before[1]), 3); self.assertEqual(len(self.before[2]), 3)
         self.assertEqual(db.integrity_check(self.path), [])
 
     def test_new_columns_default_for_old_rows(self):
-        db.init_db(self.path)
+        db.init_db(self.path, target_version=2)
         with db.reader(self.path) as c:
             rows = c.execute("SELECT active,platoon_id FROM users").fetchall()
         self.assertEqual([(r[0], r[1]) for r in rows], [(1, None)] * 3)
         self.assertEqual(repo.get_user(self.path, 2)["active"], 1)
 
     def test_child_foreign_keys_still_point_at_users_and_cascade_still_works(self):
-        db.init_db(self.path)
+        db.init_db(self.path, target_version=2)
         with db.reader(self.path) as c:
             sql = {r[0]: r[1] for r in c.execute("SELECT name,sql FROM sqlite_master WHERE type='table'")}
             self.assertEqual(c.execute("PRAGMA foreign_keys").fetchone()[0], 1, "connect() must give FK enforcement")
             fks = {(t, r[2]) for t in ("sessions", "results") for r in c.execute(f"PRAGMA foreign_key_list({t})")}
         self.assertEqual(fks, {("sessions", "users"), ("results", "users")})
         self.assertNotIn("users_v2", " ".join(sql.values()), "the temporary table name must not survive anywhere")
-        repo.delete_user(self.path, 2)
+        with db.transaction(self.path) as c:   # raw SQL: the v3 repository does not apply to a v2 file
+            c.execute("DELETE FROM users WHERE id=2")
         with db.reader(self.path) as c:
             self.assertEqual(c.execute("SELECT count(*) FROM results WHERE user_id=2").fetchone()[0], 0)
             self.assertEqual(c.execute("SELECT count(*) FROM sessions WHERE user_id=2").fetchone()[0], 0)
@@ -83,18 +84,21 @@ class V1ToV2(unittest.TestCase):
             self.assertEqual(c.execute("SELECT count(*) FROM sessions").fetchone()[0], 2)
 
     def test_old_sessions_still_resolve_after_upgrade(self):
-        db.init_db(self.path)
+        db.init_db(self.path, target_version=2)
         tok = sessions.issue(self.path, 2, 14)
         self.assertEqual(sessions.resolve(self.path, tok)["id"], 2)
         with db.reader(self.path) as c:
             self.assertEqual(c.execute("SELECT user_id FROM sessions WHERE token_hash='tok-dana'").fetchone()[0], 2)
 
     def test_role_check_now_allows_instructor_and_still_rejects_unknown(self):
-        db.init_db(self.path)
-        repo.create_user(self.path, email="ins@example.com", name="I", gender="M", is_km=False, pw_hash="h", role="instructor")
-        with self.assertRaises(Exception):
-            repo.create_user(self.path, email="x@example.com", name="X", gender="M", is_km=False, pw_hash="h", role="root")
-
+        db.init_db(self.path, target_version=2)
+        c = sqlite3.connect(self.path)
+        try:
+            c.execute("INSERT INTO users(email,name,gender,is_km,pw_hash,role) VALUES('ins@example.com','I','M',0,'h','instructor')")
+            with self.assertRaises(sqlite3.IntegrityError):
+                c.execute("INSERT INTO users(email,name,gender,is_km,pw_hash,role) VALUES('x@example.com','X','M',0,'h','root')")
+        finally:
+            c.close()
 
     def test_why_foreign_keys_must_be_off_during_the_rebuild(self):
         """Evidence for the design: running the SAME script with foreign_keys=ON destroys the child rows
@@ -117,7 +121,7 @@ class V1ToV2(unittest.TestCase):
         c.commit(); c.close()
         before = snapshot(self.path)
         with self.assertRaises(StorageError) as cm:
-            db.init_db(self.path)
+            db.init_db(self.path, target_version=2)
         self.assertIn("foreign key", str(cm.exception).lower())
         self.assertEqual(db.user_version(self.path), 1, "failed upgrade must leave the database at v1")
         self.assertEqual(snapshot(self.path), before, "failed upgrade must change nothing")
@@ -126,9 +130,9 @@ class V1ToV2(unittest.TestCase):
         self.assertNotIn("platoons", names); self.assertNotIn("users_v2", names)
 
     def test_init_is_idempotent_at_v2(self):
-        db.init_db(self.path)
+        db.init_db(self.path, target_version=2)
         again = snapshot(self.path)
-        self.assertEqual(db.init_db(self.path), 2)
+        self.assertEqual(db.init_db(self.path, target_version=2), 2)
         self.assertEqual(snapshot(self.path), again)
 
     def test_concurrent_upgrade_threads_and_processes(self):
@@ -138,7 +142,7 @@ class V1ToV2(unittest.TestCase):
         def up():
             barrier.wait()
             try:
-                results.append(db.init_db(self.path))
+                results.append(db.init_db(self.path, target_version=2))
             except Exception as e:  # noqa: BLE001
                 errors.append(repr(e))
         ts = [threading.Thread(target=up) for _ in range(4)]
@@ -147,7 +151,7 @@ class V1ToV2(unittest.TestCase):
         self.assertEqual(snapshot(self.path), self.before)
 
     def test_concurrent_upgrade_processes(self):
-        procs = [subprocess.Popen([sys.executable, "-m", "tests.workers", "init_only", self.path], cwd=ROOT,
+        procs = [subprocess.Popen([sys.executable, "-m", "tests.workers", "init_only", self.path, "2"], cwd=ROOT,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(5)]
         outs = [p.communicate(timeout=120)[0].strip() for p in procs]
         self.assertEqual(outs, ["VERSION 2"] * 5, outs)

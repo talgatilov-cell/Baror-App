@@ -30,8 +30,9 @@ class Layering(unittest.TestCase):
 
     def test_scripts_use_the_standard_library_only(self):
         stdlib = set(__import__("sys").stdlib_module_names) | {"baror", "__future__"}
+        siblings = {f.stem for f in (ROOT / "scripts").glob("*.py")}     # scripts may import each other (retention -> backup)
         for f in (ROOT / "scripts").glob("*.py"):
-            self.assertEqual(imports_of(f) - stdlib, set(), f.name)
+            self.assertEqual(imports_of(f) - stdlib - siblings, set(), f.name)
 
 
 if __name__ == "__main__":

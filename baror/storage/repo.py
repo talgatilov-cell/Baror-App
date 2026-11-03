@@ -2,25 +2,34 @@
 
 Rules enforced here (tested in tests/test_repo.py):
 * There is NO function that returns another user's results or lists all users.
-* Every statement that touches ``results`` carries ``user_id = ?``; update/delete carry BOTH ``id = ?`` and
-  ``user_id = ?`` so a guessed result id cannot reach another user's row (no IDOR).
+* Every statement that touches ``results`` is scoped to the caller's pseudonym; update/delete carry BOTH ``id = ?`` and
+  the pseudonym so a guessed result id cannot reach another user's row (no IDOR).
 * SQL is always parameterized. Identifiers are never built from input.
 * Emails are normalised (strip + lower) in ONE place (``normalize_email``); the schema CHECK is the backstop.
 * Callers receive plain dicts; ``pw_hash`` is only returned by ``get_login_record``.
 * Schema v2: web registration goes through ``register_with_allowlist`` ONLY. ``create_user`` is the trusted/internal
   path (JSON migration, operator tooling, tests) and does not consult the allowlist.
+* Schema v3 (ADR-0002): results hang off a random pseudonym. Callers still pass ``user_id``; every results statement
+  resolves it to that same user's pseudonym with ``PSEUDONYM_OF_USER``, so isolation is exactly as before.
 * Cohort (instructor) reads live in ``baror.storage.cohort``; this module still has no function that returns another
   user's results.
 """
 from __future__ import annotations
 
 import datetime as _dt
+import secrets
 from typing import Any
 
 from baror.errors import ConflictError, NotFoundError, RegistrationDeniedError, ValidationError
 from baror.storage import audit, db
 
 GENDERS = ("M", "F")
+# The pseudonym of the user whose id is the (single) bound parameter. Never built from input.
+PSEUDONYM_OF_USER = "(SELECT pseudonym FROM users WHERE id = ?)"
+
+
+def new_pseudonym() -> str:
+    return secrets.token_hex(16)   # 128 random bits, 32 hex chars (the schema CHECK expects exactly that)
 
 
 def normalize_email(email: str) -> str:
@@ -70,9 +79,12 @@ def create_user(db_path, *, email: str, name: str, gender: str, is_km: bool, pw_
     _check_profile(name, gender)
     with db.transaction(db_path) as c:
         # sqlite3.IntegrityError (UNIQUE) is translated to ConflictError by db.transaction
+        pseudonym = new_pseudonym()
+        c.execute("INSERT INTO pseudonyms(pseudonym) VALUES(?)", (pseudonym,))
         cur = c.execute(
-            "INSERT INTO users(email,name,gender,is_km,pw_hash,must_change_pw,role,platoon_id) VALUES(?,?,?,?,?,?,?,?)",
-            (e, name.strip(), gender, int(bool(is_km)), pw_hash, int(bool(must_change_pw)), role, platoon_id))
+            "INSERT INTO users(email,name,gender,is_km,pw_hash,must_change_pw,role,platoon_id,pseudonym) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            (e, name.strip(), gender, int(bool(is_km)), pw_hash, int(bool(must_change_pw)), role, platoon_id, pseudonym))
         return int(cur.lastrowid)
 
 
@@ -106,11 +118,13 @@ def register_with_allowlist(db_path, *, email: str, name: str, gender: str, is_k
             elif c.execute("SELECT 1 FROM users WHERE email=?", (e,)).fetchone():
                 reason = "account_exists"
             if reason is None:
+                pseudonym = new_pseudonym()
+                c.execute("INSERT INTO pseudonyms(pseudonym) VALUES(?)", (pseudonym,))
                 uid = int(c.execute(
-                    "INSERT INTO users(email,name,gender,is_km,pw_hash,must_change_pw,role,platoon_id) "
-                    "VALUES(?,?,?,?,?,?,?,?)",
+                    "INSERT INTO users(email,name,gender,is_km,pw_hash,must_change_pw,role,platoon_id,pseudonym) "
+                    "VALUES(?,?,?,?,?,?,?,?,?)",
                     (e, name.strip(), gender, int(bool(is_km)), pw_hash, int(bool(must_change_pw)),
-                     ent["role"], ent["platoon_id"])).lastrowid)
+                     ent["role"], ent["platoon_id"], pseudonym)).lastrowid)
                 won = c.execute("UPDATE allowed_emails SET used_by=?, used_at=? WHERE email=? AND used_at IS NULL",
                                 (uid, audit.ts(now), e)).rowcount
                 if won != 1:  # cannot happen under the write lock; fail closed (rolls the INSERT back)
@@ -174,9 +188,13 @@ def set_password_hash(db_path, user_id: int, pw_hash: str, *, must_change_pw: bo
 
 
 def delete_user(db_path, user_id: int) -> None:
-    """Cascade removes results and sessions (ON DELETE CASCADE, foreign_keys=ON per connection)."""
+    """ERASURE at the user's request: removes the account, its sessions AND its results.
+
+    Deleting the ``pseudonyms`` row cascades to ``users`` (and from there to sessions) and to ``results``. Deleting only
+    the ``users`` row would be the retention path (see baror.storage.retention): results would stay, de-identified.
+    """
     with db.transaction(db_path) as c:
-        cur = c.execute("DELETE FROM users WHERE id=?", (user_id,))
+        cur = c.execute("DELETE FROM pseudonyms WHERE pseudonym = " + PSEUDONYM_OF_USER, (user_id,))
         if cur.rowcount == 0:
             raise NotFoundError(detail=f"user {user_id}")
 
@@ -187,16 +205,18 @@ def add_result(db_path, user_id: int, *, test_date: str, run_tenths: int | None 
     _check_date(test_date)
     _check_measurements(run_tenths, pushups)
     with db.transaction(db_path) as c:
-        cur = c.execute("INSERT INTO results(user_id,test_date,run_tenths,pushups) VALUES(?,?,?,?)",
-                        (user_id, test_date, run_tenths, pushups))
+        cur = c.execute("INSERT INTO results(pseudonym,test_date,run_tenths,pushups) "
+                        "SELECT pseudonym,?,?,? FROM users WHERE id=?", (test_date, run_tenths, pushups, user_id))
+        if cur.rowcount == 0:   # no such user: same refusal the old foreign key gave
+            raise ValidationError("INVALID_RESULT", field="user", detail=f"no user {user_id!r}")
         return int(cur.lastrowid)
 
 
 def list_results(db_path, user_id: int) -> list[dict[str, Any]]:
     """Newest first; id as tie-breaker so ordering is deterministic."""
     with db.reader(db_path) as c:
-        rows = c.execute("SELECT id,test_date,run_tenths,pushups,created_at FROM results WHERE user_id=? "
-                         "ORDER BY test_date DESC, id DESC", (user_id,)).fetchall()
+        rows = c.execute("SELECT id,test_date,run_tenths,pushups,created_at FROM results WHERE pseudonym = "
+                         + PSEUDONYM_OF_USER + " ORDER BY test_date DESC, id DESC", (user_id,)).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -205,7 +225,7 @@ def update_result(db_path, user_id: int, result_id: int, *, test_date: str, run_
     _check_date(test_date)
     _check_measurements(run_tenths, pushups)
     with db.transaction(db_path) as c:
-        cur = c.execute("UPDATE results SET test_date=?, run_tenths=?, pushups=? WHERE id=? AND user_id=?",
+        cur = c.execute("UPDATE results SET test_date=?, run_tenths=?, pushups=? WHERE id=? AND pseudonym = " + PSEUDONYM_OF_USER,
                         (test_date, run_tenths, pushups, result_id, user_id))
         if cur.rowcount == 0:  # same answer for "no such id" and "someone else's id"
             raise NotFoundError(detail=f"result {result_id}")
@@ -213,15 +233,15 @@ def update_result(db_path, user_id: int, result_id: int, *, test_date: str, run_
 
 def delete_result(db_path, user_id: int, result_id: int) -> None:
     with db.transaction(db_path) as c:
-        cur = c.execute("DELETE FROM results WHERE id=? AND user_id=?", (result_id, user_id))
+        cur = c.execute("DELETE FROM results WHERE id=? AND pseudonym = " + PSEUDONYM_OF_USER, (result_id, user_id))
         if cur.rowcount == 0:
             raise NotFoundError(detail=f"result {result_id}")
 
 
 def find_duplicate(db_path, user_id: int, *, test_date: str, run_tenths: int | None, pushups: int | None) -> bool:
     with db.reader(db_path) as c:
-        row = c.execute("SELECT 1 FROM results WHERE user_id=? AND test_date=? AND run_tenths IS ? AND pushups IS ? "
-                        "LIMIT 1", (user_id, test_date, run_tenths, pushups)).fetchone()
+        row = c.execute("SELECT 1 FROM results WHERE pseudonym = " + PSEUDONYM_OF_USER + " AND test_date=? AND run_tenths IS ? "
+                        "AND pushups IS ? LIMIT 1", (user_id, test_date, run_tenths, pushups)).fetchone()
     return row is not None
 
 

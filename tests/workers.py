@@ -25,7 +25,8 @@ def open_tx_and_hang(path, user_id):
     c = db.connect(path)
     c.execute("BEGIN IMMEDIATE")
     for i in range(2000):
-        c.execute("INSERT INTO results(user_id,test_date,pushups) VALUES(?,?,?)", (int(user_id), "2026-02-02", i % 100))
+        c.execute("INSERT INTO results(pseudonym,test_date,pushups) SELECT pseudonym,?,? FROM users WHERE id=?",
+                  ("2026-02-02", i % 100, int(user_id)))
     print("READY", flush=True)
     time.sleep(60)
 
@@ -37,7 +38,8 @@ def commit_batches_forever(path, user_id, batch):
     while True:
         with db.transaction(path) as c:
             for i in range(batch):
-                c.execute("INSERT INTO results(user_id,test_date,pushups) VALUES(?,?,?)", (int(user_id), "2026-03-03", i))
+                c.execute("INSERT INTO results(pseudonym,test_date,pushups) SELECT pseudonym,?,? FROM users WHERE id=?",
+                          ("2026-03-03", i, int(user_id)))
 
 
 def as_uid_init(path, uid):
@@ -70,9 +72,9 @@ def register_allowlisted(path, email):
         print(type(e).__name__)
 
 
-def init_only(path):
+def init_only(path, target=None):
     try:
-        print("VERSION", db.init_db(path))
+        print("VERSION", db.init_db(path, target_version=int(target) if target else None))
     except BarorError as e:
         print("ERR", type(e).__name__)
 

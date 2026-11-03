@@ -115,11 +115,71 @@ CREATE INDEX idx_audit_target ON audit_log(target_user_id, ts);
 CREATE INDEX idx_audit_actor ON audit_log(actor_id, ts)
 """
 
+
+# Schema v3 (ADR-0002, pseudonymized retention). Results hang off a random pseudonym, not off a user row, so that
+# deleting the identity row in ``users`` (name, e-mail, password hash, pseudonym) leaves de-identified results behind.
+#   pseudonyms        parent of results; holds NO personal data. gender/is_km/platoon are copied here only when a
+#                     cadet is de-identified (the columns are NULL while the account is live).
+#   users.pseudonym   THE identity link (the only table that connects a person to a pseudonym).
+#   results.pseudonym FK to pseudonyms, not to users. Erasure by the user deletes the pseudonyms row, which cascades
+#                     to the users row, the sessions and the results.
+#   platoons.course_end  start of the retention clock (set by the operator).
+# Rebuilds ``users`` and ``results`` with foreign_keys=OFF (see SCHEMA_V2 for the procedure). Pseudonyms for existing
+# users come from SQLite's randomblob (seeded from the operating system); later ones from ``secrets``.
+SCHEMA_V3 = """
+CREATE TABLE pseudonyms(
+ pseudonym TEXT PRIMARY KEY CHECK(length(pseudonym)=32 AND pseudonym NOT GLOB '*[^0-9a-f]*'),
+ gender TEXT CHECK(gender IS NULL OR gender IN ('M','F')),
+ is_km INTEGER CHECK(is_km IS NULL OR is_km IN (0,1)),
+ platoon_id INTEGER REFERENCES platoons(id) ON DELETE SET NULL,
+ deidentified_at TEXT,
+ CHECK((deidentified_at IS NULL) = (gender IS NULL)));
+CREATE TABLE _pmap(user_id INTEGER PRIMARY KEY, pseudonym TEXT NOT NULL UNIQUE);
+INSERT INTO _pmap(user_id,pseudonym) SELECT id, lower(hex(randomblob(16))) FROM users;
+INSERT INTO pseudonyms(pseudonym) SELECT pseudonym FROM _pmap;
+CREATE TABLE users_v3(
+ id INTEGER PRIMARY KEY,
+ email TEXT NOT NULL UNIQUE CHECK(email=lower(trim(email)) AND instr(email,'@')>1),
+ name TEXT NOT NULL CHECK(length(trim(name)) BETWEEN 1 AND 80),
+ gender TEXT NOT NULL CHECK(gender IN ('M','F')),
+ is_km INTEGER NOT NULL DEFAULT 0 CHECK(is_km IN (0,1)),
+ pw_hash TEXT NOT NULL CHECK(length(pw_hash) > 0),
+ must_change_pw INTEGER NOT NULL DEFAULT 0 CHECK(must_change_pw IN (0,1)),
+ role TEXT NOT NULL DEFAULT 'cadet' CHECK(role IN ('cadet','instructor','admin')),
+ failed_logins INTEGER NOT NULL DEFAULT 0,
+ locked_until TEXT,
+ created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+ active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+ platoon_id INTEGER REFERENCES platoons(id) ON DELETE SET NULL,
+ pseudonym TEXT NOT NULL UNIQUE REFERENCES pseudonyms(pseudonym) ON DELETE CASCADE);
+INSERT INTO users_v3(id,email,name,gender,is_km,pw_hash,must_change_pw,role,failed_logins,locked_until,created_at,active,platoon_id,pseudonym)
+ SELECT u.id,u.email,u.name,u.gender,u.is_km,u.pw_hash,u.must_change_pw,u.role,u.failed_logins,u.locked_until,u.created_at,u.active,u.platoon_id,m.pseudonym
+ FROM users u JOIN _pmap m ON m.user_id=u.id;
+CREATE TABLE results_v3(
+ id INTEGER PRIMARY KEY,
+ pseudonym TEXT NOT NULL REFERENCES pseudonyms(pseudonym) ON DELETE CASCADE,
+ test_date TEXT NOT NULL CHECK(date(test_date) IS NOT NULL AND date(test_date)=test_date),
+ run_tenths INTEGER CHECK(run_tenths IS NULL OR run_tenths BETWEEN 1 AND 72000),
+ pushups INTEGER CHECK(pushups IS NULL OR pushups BETWEEN 0 AND 300),
+ created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+ CHECK(run_tenths IS NOT NULL OR pushups IS NOT NULL));
+INSERT INTO results_v3(id,pseudonym,test_date,run_tenths,pushups,created_at)
+ SELECT r.id,m.pseudonym,r.test_date,r.run_tenths,r.pushups,r.created_at FROM results r JOIN _pmap m ON m.user_id=r.user_id;
+DROP TABLE results;
+DROP TABLE users;
+ALTER TABLE users_v3 RENAME TO users;
+ALTER TABLE results_v3 RENAME TO results;
+DROP TABLE _pmap;
+CREATE INDEX idx_users_platoon ON users(platoon_id);
+CREATE INDEX idx_results_pseudonym_date ON results(pseudonym,test_date);
+ALTER TABLE platoons ADD COLUMN course_end TEXT CHECK(course_end IS NULL OR (date(course_end) IS NOT NULL AND date(course_end)=course_end))
+"""
+
 # user_version -> script that upgrades from (version-1). Append only; never edit a released entry.
-MIGRATIONS: dict[int, str] = {1: SCHEMA_V1, 2: SCHEMA_V2}
+MIGRATIONS: dict[int, str] = {1: SCHEMA_V1, 2: SCHEMA_V2, 3: SCHEMA_V3}
 LATEST_VERSION = max(MIGRATIONS)
 # Versions whose script rebuilds a table that other tables reference: run with foreign_keys=OFF + foreign_key_check.
-_FK_OFF_VERSIONS = frozenset({2})
+_FK_OFF_VERSIONS = frozenset({2, 3})
 
 
 def _translate(exc: sqlite3.Error, what: str) -> Exception:
@@ -139,22 +199,29 @@ def _translate(exc: sqlite3.Error, what: str) -> Exception:
     return StorageError(detail=f"{what}: {exc}")
 
 
-def connect(db_path: str | os.PathLike, *, timeout_ms: int = BUSY_TIMEOUT_MS) -> sqlite3.Connection:
-    """Open a configured connection. Caller closes it (use ``transaction``/``reader`` instead where possible)."""
+def connect(db_path: str | os.PathLike, *, timeout_ms: int = BUSY_TIMEOUT_MS,
+            secure_delete: bool = False) -> sqlite3.Connection:
+    """Open a configured connection. Caller closes it (use ``transaction``/``reader`` instead where possible).
+
+    ``secure_delete``: overwrite deleted content with zeros instead of leaving it in free pages. Only the retention
+    job asks for it (it costs write time and ordinary deletes do not need it).
+    """
     try:
         conn = sqlite3.connect(os.fspath(db_path), timeout=timeout_ms / 1000, isolation_level=None)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys=ON")  # per-connection, off by default
         conn.execute(f"PRAGMA busy_timeout={int(timeout_ms)}")
+        if secure_delete:
+            conn.execute("PRAGMA secure_delete=ON")
         return conn
     except sqlite3.Error as exc:
         raise _translate(exc, "connect") from exc
 
 
 @contextlib.contextmanager
-def transaction(db_path, *, timeout_ms: int = BUSY_TIMEOUT_MS) -> Iterator[sqlite3.Connection]:
+def transaction(db_path, *, timeout_ms: int = BUSY_TIMEOUT_MS, secure_delete: bool = False) -> Iterator[sqlite3.Connection]:
     """Write transaction: BEGIN IMMEDIATE ... COMMIT, ROLLBACK on any exception, connection always closed."""
-    conn = connect(db_path, timeout_ms=timeout_ms)
+    conn = connect(db_path, timeout_ms=timeout_ms, secure_delete=secure_delete)
     try:
         try:
             conn.execute("BEGIN IMMEDIATE")
@@ -188,8 +255,10 @@ def user_version(db_path) -> int:
         return c.execute("PRAGMA user_version").fetchone()[0]
 
 
-def init_db(db_path: str | os.PathLike) -> int:
+def init_db(db_path: str | os.PathLike, *, target_version: int | None = None) -> int:
     """Create or upgrade the database. Idempotent. Returns the schema version.
+
+    ``target_version`` (default: the latest) stops early; it exists so tests can exercise one migration step at a time.
 
     * Missing file: created (parent directory must already exist and be writable; we do not mkdir).
     * Existing non-database file: raises CorruptedDataError and leaves the file byte-for-byte untouched.
@@ -209,7 +278,10 @@ def init_db(db_path: str | os.PathLike) -> int:
         current = conn.execute("PRAGMA user_version").fetchone()[0]
         if current > LATEST_VERSION:
             raise StorageError(detail=f"database schema v{current} is newer than this app (v{LATEST_VERSION})")
-        for version in range(current + 1, LATEST_VERSION + 1):
+        stop = LATEST_VERSION if target_version is None else target_version
+        if not 1 <= stop <= LATEST_VERSION:
+            raise StorageError(detail=f"unknown target schema version {target_version!r}")
+        for version in range(current + 1, stop + 1):
             _apply_migration(conn, version)
         return conn.execute("PRAGMA user_version").fetchone()[0]
     except sqlite3.Error as exc:
@@ -233,8 +305,12 @@ def _apply_migration(conn: sqlite3.Connection, version: int) -> None:
             if conn.execute("PRAGMA user_version").fetchone()[0] >= version:
                 conn.execute("ROLLBACK")
                 return
+            before = _row_counts(conn, version)
             for stmt in _split(MIGRATIONS[version]):
                 conn.execute(stmt)
+            if before is not None and _row_counts(conn, version) != before:   # never drop rows silently
+                raise StorageError(detail=f"migration v{version} aborted: row counts changed {before} -> "
+                                          f"{_row_counts(conn, version)}")
             if fk_off:  # step 10: refuse to commit a rebuild that left dangling references
                 bad = conn.execute("PRAGMA foreign_key_check").fetchall()
                 if bad:
@@ -249,6 +325,13 @@ def _apply_migration(conn: sqlite3.Connection, version: int) -> None:
     finally:
         if fk_off:  # step 12
             conn.execute("PRAGMA foreign_keys=ON")
+
+
+def _row_counts(conn: sqlite3.Connection, version: int):
+    """Rows that a rebuilding migration must carry over unchanged (v3 joins results to users: an orphan would vanish)."""
+    if version != 3:
+        return None
+    return tuple(conn.execute(f"SELECT count(*) FROM {t}").fetchone()[0] for t in ("users", "results", "sessions"))
 
 
 def _split(script: str) -> list[str]:

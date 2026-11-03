@@ -84,8 +84,8 @@ class Threads(DbCase):
             try:
                 for _ in range(150):
                     with db.transaction(self.path) as c:  # two rows per transaction -> count must always be even
-                        c.execute("INSERT INTO results(user_id,test_date,pushups) VALUES(?,?,1)", (uid, "2026-01-01"))
-                        c.execute("INSERT INTO results(user_id,test_date,pushups) VALUES(?,?,2)", (uid, "2026-01-01"))
+                        c.execute("INSERT INTO results(pseudonym,test_date,pushups) SELECT pseudonym,?,1 FROM users WHERE id=?", ("2026-01-01", uid))
+                        c.execute("INSERT INTO results(pseudonym,test_date,pushups) SELECT pseudonym,?,2 FROM users WHERE id=?", ("2026-01-01", uid))
             except Exception as e:  # noqa: BLE001
                 errors.append(repr(e))
             finally:

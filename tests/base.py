@@ -21,3 +21,7 @@ class DbCase(unittest.TestCase):
         args = dict(email=email, name="Test", gender="M", is_km=False, pw_hash="x$hash")
         args.update(kw)
         return repo.create_user(self.path, **args)
+
+    def pseudonym_of(self, user_id):
+        with db.reader(self.path) as c:
+            return c.execute("SELECT pseudonym FROM users WHERE id=?", (user_id,)).fetchone()[0]

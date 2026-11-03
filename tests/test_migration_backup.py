@@ -182,8 +182,8 @@ class Backup(unittest.TestCase):
         def write():
             while not stop.is_set():
                 with db.transaction(self.db) as c:
-                    c.execute("INSERT INTO results(user_id,test_date,pushups) VALUES(?,?,1)", (self.uid, "2026-05-05"))
-                    c.execute("INSERT INTO results(user_id,test_date,pushups) VALUES(?,?,2)", (self.uid, "2026-05-05"))
+                    c.execute("INSERT INTO results(pseudonym,test_date,pushups) SELECT pseudonym,?,1 FROM users WHERE id=?", ("2026-05-05", self.uid))
+                    c.execute("INSERT INTO results(pseudonym,test_date,pushups) SELECT pseudonym,?,2 FROM users WHERE id=?", ("2026-05-05", self.uid))
         t = threading.Thread(target=write); t.start()
         try:
             outs = [B.backup(self.db, self.d / "bk", now=dt.datetime(2026, 1, i + 1, tzinfo=dt.timezone.utc)) for i in range(5)]

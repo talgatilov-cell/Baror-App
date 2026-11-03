@@ -9,6 +9,7 @@
     python scripts/admin_users.py --db DB assign EMAIL PLATOON_NAME|-         # cadet -> platoon ('-' clears)
     python scripts/admin_users.py --db DB grant EMAIL PLATOON_NAME            # instructor may READ this platoon
     python scripts/admin_users.py --db DB revoke EMAIL PLATOON_NAME
+    python scripts/admin_users.py --db DB course-end PLATOON_NAME YYYY-MM-DD|-   # starts the 6-month retention clock ('-' clears)
 
 Exit codes: 0 ok | 1 target not found / refused (e.g. last admin) | 2 usage | 4 database error.
 Every change writes an audit_log row (actor NULL = operator). Passwords are never handled here.
@@ -16,6 +17,7 @@ Every change writes an audit_log row (actor NULL = operator). Passwords are neve
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import os
 import sys
 from pathlib import Path
@@ -23,7 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from baror.errors import BarorError, ConflictError, NotFoundError, StorageError, ValidationError  # noqa: E402
-from baror.storage import db, ops, repo  # noqa: E402
+from baror.storage import db, ops, repo, retention  # noqa: E402
 
 
 def _uid(db_path, email):
@@ -64,6 +66,14 @@ def run(a) -> int:
             ops.grant_platoon(p, _uid(p, a.email), _pid(p, a.platoon))
         elif a.cmd == "revoke":
             ops.revoke_platoon(p, _uid(p, a.email), _pid(p, a.platoon))
+        elif a.cmd == "course-end":
+            retention.set_course_end(p, _pid(p, a.platoon), None if a.date == "-" else a.date)
+            if a.date != "-":
+                due = retention.deadline(a.date)
+                print(f"retention deadline for this platoon: {due.isoformat()}")
+                if due <= dt.date.today():
+                    print("WARNING: that deadline has already passed; the next retention run will de-identify this "
+                          "platoon's cadets permanently. Check with: scripts/retention.py --dry-run", file=sys.stderr)
         return 0
     except (NotFoundError, ConflictError, ValidationError) as exc:
         print(f"refused: {exc.detail or exc.message_key}", file=sys.stderr); return 1
@@ -78,7 +88,8 @@ def main(argv=None) -> int:
     sub.add_parser("list")
     for name, args in (("set-role", ("email", "role")), ("deactivate", ("email",)), ("reactivate", ("email",)),
                        ("platoon-add", ("name",)), ("assign", ("email", "platoon")), ("grant", ("email", "platoon")),
-                       ("revoke", ("email", "platoon"))):
+                       ("revoke", ("email", "platoon")),
+                       ("course-end", ("platoon", "date"))):
         sp = sub.add_parser(name)
         for x in args:
             sp.add_argument(x)

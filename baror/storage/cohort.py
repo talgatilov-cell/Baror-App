@@ -99,7 +99,7 @@ def cohort_summary(db_path, actor_id, platoon_id, *, now: dt.datetime | None = N
             return None
         rows = c.execute(
             f"SELECT u.id,u.name,u.gender,u.is_km,r.test_date,r.run_tenths,r.pushups FROM users u "
-            f"LEFT JOIN results r ON r.user_id=u.id WHERE u.platoon_id=:platoon AND u.role='cadet' AND u.active=1 "
+            f"LEFT JOIN results r ON r.pseudonym=u.pseudonym WHERE u.platoon_id=:platoon AND u.role='cadet' AND u.active=1 "
             f"AND {_GRANTED} ORDER BY u.name, u.id, r.test_date DESC, r.id DESC",
             {"actor": actor, "platoon": platoon}).fetchall()
         by: dict[int, dict[str, Any]] = {}
@@ -133,14 +133,14 @@ def get_cadet_results(db_path, actor_id, cadet_id, *, now: dt.datetime | None = 
     Authorised iff the cadet is an ACTIVE CADET whose CURRENT platoon the actor is granted. Audited per call."""
     def body(c, actor, _platoon, cadet):
         t = c.execute(
-            f"SELECT t.id,t.name,t.gender,t.is_km,t.platoon_id FROM users t WHERE t.id=:cadet AND t.role='cadet' "
+            f"SELECT t.id,t.name,t.gender,t.is_km,t.platoon_id,t.pseudonym FROM users t WHERE t.id=:cadet AND t.role='cadet' "
             f"AND t.active=1 AND t.platoon_id IS NOT NULL AND EXISTS (SELECT 1 FROM users a JOIN instructor_platoons ip "
             f"ON ip.instructor_id=a.id AND ip.platoon_id=t.platoon_id WHERE a.id=:actor AND a.active=1 "
             f"AND a.role IN {_STAFF})", {"actor": actor, "cadet": cadet}).fetchone()
         if t is None:
             return None
-        res = c.execute("SELECT test_date,run_tenths,pushups FROM results WHERE user_id=? "
-                        "ORDER BY test_date DESC, id DESC", (t["id"],)).fetchall()
+        res = c.execute("SELECT test_date,run_tenths,pushups FROM results WHERE pseudonym=? "
+                        "ORDER BY test_date DESC, id DESC", (t["pseudonym"],)).fetchall()
         audit.record(c, actor_id=actor, action="cohort.cadet", target_user_id=t["id"], platoon_id=t["platoon_id"], now=now)
         return {"cadet": {k: t[k] for k in ("id", "name", "gender", "is_km")}, "results": [dict(r) for r in res]}
     return _run(db_path, actor_id, "cohort.cadet", None, cadet_id, now, body)

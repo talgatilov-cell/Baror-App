@@ -15,6 +15,20 @@ class SchemaConstraints(DbCase):
         finally:
             c.close()
 
+    def ps(self):
+        """A parent pseudonym row, so a raw users insert fails ONLY on the constraint a test is about."""
+        p = os.urandom(16).hex()
+        self.raw("INSERT INTO pseudonyms(pseudonym) VALUES(?)", (p,))
+        return p
+
+    def test_raw_user_insert_baseline_is_valid(self):
+        """Control for the constraint tests below: with everything valid the insert succeeds."""
+        self.raw("INSERT INTO users(email,name,gender,is_km,pw_hash,pseudonym) VALUES('ok@x.com','n','M',0,'h',?)", (self.ps(),))
+        with self.assertRaises(sqlite3.IntegrityError):      # and the pseudonym really is required
+            self.raw("INSERT INTO users(email,name,gender,pw_hash) VALUES('no-ps@x.com','n','M','h')")
+        with self.assertRaises(sqlite3.IntegrityError):      # ...and must exist in the parent table
+            self.raw("INSERT INTO users(email,name,gender,pw_hash,pseudonym) VALUES('orph@x.com','n','M','h',?)", ("cd" * 16,))
+
     def test_version_and_pragmas(self):
         self.assertEqual(db.user_version(self.path), db.LATEST_VERSION)
         with db.reader(self.path) as c:
@@ -31,43 +45,64 @@ class SchemaConstraints(DbCase):
     def test_email_must_be_lowercase_trimmed_at_sql_level(self):
         for bad in ["A@x.com", " a@x.com", "a@x.com ", "nope", "@x.com"]:
             with self.subTest(bad=bad), self.assertRaises(sqlite3.IntegrityError):
-                self.raw("INSERT INTO users(email,name,gender,pw_hash) VALUES(?,?,?,?)", (bad, "n", "M", "h"))
+                self.raw("INSERT INTO users(email,name,gender,pw_hash,pseudonym) VALUES(?,?,?,?,?)", (bad, "n", "M", "h", self.ps()))
 
     def test_gender_and_bool_checks(self):
         with self.assertRaises(sqlite3.IntegrityError):
-            self.raw("INSERT INTO users(email,name,gender,pw_hash) VALUES('a@x.com','n','X','h')")
+            self.raw("INSERT INTO users(email,name,gender,pw_hash,pseudonym) VALUES('a@x.com','n','X','h',?)", (self.ps(),))
         with self.assertRaises(sqlite3.IntegrityError):
-            self.raw("INSERT INTO users(email,name,gender,is_km,pw_hash) VALUES('a@x.com','n','M',2,'h')")
+            self.raw("INSERT INTO users(email,name,gender,is_km,pw_hash,pseudonym) VALUES('a@x.com','n','M',2,'h',?)", (self.ps(),))
 
     def test_empty_pw_hash_rejected(self):
         with self.assertRaises(sqlite3.IntegrityError):
-            self.raw("INSERT INTO users(email,name,gender,pw_hash) VALUES('a@x.com','n','M','')")
+            self.raw("INSERT INTO users(email,name,gender,pw_hash,pseudonym) VALUES('a@x.com','n','M','',?)", (self.ps(),))
 
     def test_brief_glob_accepted_impossible_dates_but_schema_v1_does_not(self):
-        uid = self.user()
+        ps = self.pseudonym_of(self.user())
         for bad in ["2026-99-99", "2026-02-31", "2026-13-01", "2026-1-5", "20260101", "abcd-ef-gh", ""]:
             with self.subTest(bad=bad), self.assertRaises(sqlite3.IntegrityError):
-                self.raw("INSERT INTO results(user_id,test_date,pushups) VALUES(?,?,10)", (uid, bad))
-        self.raw("INSERT INTO results(user_id,test_date,pushups) VALUES(?,?,10)", (uid, "2024-02-29"))  # leap day ok
+                self.raw("INSERT INTO results(pseudonym,test_date,pushups) VALUES(?,?,10)", (ps, bad))
+        self.raw("INSERT INTO results(pseudonym,test_date,pushups) VALUES(?,?,10)", (ps, "2024-02-29"))  # leap day ok
 
     def test_measurement_ranges(self):
-        uid = self.user()
+        ps = self.pseudonym_of(self.user())
         cases = [(0, None), (72001, None), (-1, None), (None, -1), (None, 301), (None, None)]
         for run, push in cases:
             with self.subTest(run=run, push=push), self.assertRaises(sqlite3.IntegrityError):
-                self.raw("INSERT INTO results(user_id,test_date,run_tenths,pushups) VALUES(?,?,?,?)",
-                         (uid, "2026-01-01", run, push))
-        self.raw("INSERT INTO results(user_id,test_date,run_tenths,pushups) VALUES(?,?,?,?)",
-                 (uid, "2026-01-01", 72000, 0))  # inclusive upper bound; 0 push-ups is a legal stored value
+                self.raw("INSERT INTO results(pseudonym,test_date,run_tenths,pushups) VALUES(?,?,?,?)",
+                         (ps, "2026-01-01", run, push))
+        self.raw("INSERT INTO results(pseudonym,test_date,run_tenths,pushups) VALUES(?,?,?,?)",
+                 (ps, "2026-01-01", 72000, 0))  # inclusive upper bound; 0 push-ups is a legal stored value
 
     def test_foreign_key_and_cascade(self):
         with self.assertRaises(sqlite3.IntegrityError):
-            self.raw("INSERT INTO results(user_id,test_date,pushups) VALUES(999,'2026-01-01',5)")
+            self.raw("INSERT INTO results(pseudonym,test_date,pushups) VALUES(?,'2026-01-01',5)", ("ab" * 16,))  # unknown parent
         uid = self.user()
         repo.add_result(self.path, uid, test_date="2026-01-01", pushups=5)
         repo.delete_user(self.path, uid)
         with db.reader(self.path) as c:
             self.assertEqual(c.execute("SELECT count(*) FROM results").fetchone()[0], 0)
+
+    def test_deleting_only_the_identity_row_keeps_the_results_unlinked(self):
+        """ADR-0002: the retention path. Erasure (repo.delete_user) is the test above."""
+        uid = self.user()
+        repo.add_result(self.path, uid, test_date="2026-01-01", pushups=5)
+        ps = self.pseudonym_of(uid)
+        self.raw("DELETE FROM users WHERE id=?", (uid,))
+        with db.reader(self.path) as c:
+            self.assertEqual(c.execute("SELECT count(*) FROM results WHERE pseudonym=?", (ps,)).fetchone()[0], 1)
+            self.assertEqual(c.execute("SELECT count(*) FROM pseudonyms WHERE pseudonym=?", (ps,)).fetchone()[0], 1)
+
+    def test_pseudonym_shape_is_enforced(self):
+        for bad in ["", "x" * 32, "AB" * 16, "ab" * 15, "ab" * 17]:
+            with self.subTest(bad=bad), self.assertRaises(sqlite3.IntegrityError):
+                self.raw("INSERT INTO pseudonyms(pseudonym) VALUES(?)", (bad,))
+
+    def test_pseudonyms_are_random_and_not_the_user_id(self):
+        ids = [self.user(f"u{i}@example.com") for i in range(20)]
+        ps = [self.pseudonym_of(i) for i in ids]
+        self.assertEqual(len(set(ps)), 20)
+        self.assertTrue(all(len(p) == 32 and p == p.lower() for p in ps))
 
     def test_integrity_check_clean(self):
         self.user()
@@ -85,7 +120,8 @@ class ErrorTranslation(DbCase):
             pass
         with self.assertRaises(ValidationError):
             with db.transaction(self.path) as c:
-                c.execute("INSERT INTO users(email,name,gender,pw_hash) VALUES('a@x.com','n','Q','h')")
+                c.execute("INSERT INTO pseudonyms(pseudonym) VALUES(?)", ("ef" * 16,))
+                c.execute("INSERT INTO users(email,name,gender,pw_hash,pseudonym) VALUES('a@x.com','n','Q','h',?)", ("ef" * 16,))
 
     def test_garbage_file_is_corrupt_and_untouched(self):
         bad = os.path.join(self.dir, "garbage.db")
@@ -141,10 +177,12 @@ class ErrorTranslation(DbCase):
             pass
         with self.assertRaises(Boom):
             with db.transaction(self.path) as c:
-                c.execute("INSERT INTO users(email,name,gender,pw_hash) VALUES('a@x.com','n','M','h')")
+                c.execute("INSERT INTO pseudonyms(pseudonym) VALUES(?)", ("ef" * 16,))
+                c.execute("INSERT INTO users(email,name,gender,pw_hash,pseudonym) VALUES('a@x.com','n','M','h',?)", ("ef" * 16,))
                 raise Boom()
         with db.reader(self.path) as c:
             self.assertEqual(c.execute("SELECT count(*) FROM users").fetchone()[0], 0)
+            self.assertEqual(c.execute("SELECT count(*) FROM pseudonyms").fetchone()[0], 0, "both inserts rolled back")
 
 
 if __name__ == "__main__":
