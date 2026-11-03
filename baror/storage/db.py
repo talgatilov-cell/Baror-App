@@ -175,11 +175,36 @@ CREATE INDEX idx_results_pseudonym_date ON results(pseudonym,test_date);
 ALTER TABLE platoons ADD COLUMN course_end TEXT CHECK(course_end IS NULL OR (date(course_end) IS NOT NULL AND date(course_end)=course_end))
 """
 
+# Schema v4 (ADR-0001): the `chief` role (chief and deputy chief). Only the role CHECK of ``users`` changes, and SQLite
+# cannot alter a CHECK, so ``users`` is rebuilt once more with foreign_keys=OFF (procedure: see SCHEMA_V2).
+SCHEMA_V4 = """
+CREATE TABLE users_v4(
+ id INTEGER PRIMARY KEY,
+ email TEXT NOT NULL UNIQUE CHECK(email=lower(trim(email)) AND instr(email,'@')>1),
+ name TEXT NOT NULL CHECK(length(trim(name)) BETWEEN 1 AND 80),
+ gender TEXT NOT NULL CHECK(gender IN ('M','F')),
+ is_km INTEGER NOT NULL DEFAULT 0 CHECK(is_km IN (0,1)),
+ pw_hash TEXT NOT NULL CHECK(length(pw_hash) > 0),
+ must_change_pw INTEGER NOT NULL DEFAULT 0 CHECK(must_change_pw IN (0,1)),
+ role TEXT NOT NULL DEFAULT 'cadet' CHECK(role IN ('cadet','instructor','admin','chief')),
+ failed_logins INTEGER NOT NULL DEFAULT 0,
+ locked_until TEXT,
+ created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+ active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+ platoon_id INTEGER REFERENCES platoons(id) ON DELETE SET NULL,
+ pseudonym TEXT NOT NULL UNIQUE REFERENCES pseudonyms(pseudonym) ON DELETE CASCADE);
+INSERT INTO users_v4(id,email,name,gender,is_km,pw_hash,must_change_pw,role,failed_logins,locked_until,created_at,active,platoon_id,pseudonym)
+ SELECT id,email,name,gender,is_km,pw_hash,must_change_pw,role,failed_logins,locked_until,created_at,active,platoon_id,pseudonym FROM users;
+DROP TABLE users;
+ALTER TABLE users_v4 RENAME TO users;
+CREATE INDEX idx_users_platoon ON users(platoon_id)
+"""
+
 # user_version -> script that upgrades from (version-1). Append only; never edit a released entry.
-MIGRATIONS: dict[int, str] = {1: SCHEMA_V1, 2: SCHEMA_V2, 3: SCHEMA_V3}
+MIGRATIONS: dict[int, str] = {1: SCHEMA_V1, 2: SCHEMA_V2, 3: SCHEMA_V3, 4: SCHEMA_V4}
 LATEST_VERSION = max(MIGRATIONS)
 # Versions whose script rebuilds a table that other tables reference: run with foreign_keys=OFF + foreign_key_check.
-_FK_OFF_VERSIONS = frozenset({2, 3})
+_FK_OFF_VERSIONS = frozenset({2, 3, 4})
 
 
 def _translate(exc: sqlite3.Error, what: str) -> Exception:
@@ -329,7 +354,7 @@ def _apply_migration(conn: sqlite3.Connection, version: int) -> None:
 
 def _row_counts(conn: sqlite3.Connection, version: int):
     """Rows that a rebuilding migration must carry over unchanged (v3 joins results to users: an orphan would vanish)."""
-    if version != 3:
+    if version not in (3, 4):
         return None
     return tuple(conn.execute(f"SELECT count(*) FROM {t}").fetchone()[0] for t in ("users", "results", "sessions"))
 

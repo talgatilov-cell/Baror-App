@@ -1,4 +1,4 @@
-"""Schema v2 -> v3 (and v1 -> v3): results move from user_id to a random pseudonym, data intact (ADR-0002)."""
+"""Schema v2 -> v3 (and v1 -> v3; each run stops at v3, later steps have their own modules): results move from user_id to a random pseudonym, data intact (ADR-0002)."""
 import os
 import re
 import sqlite3
@@ -46,13 +46,13 @@ class V2ToV3(unittest.TestCase):
 
     def test_upgrade_keeps_every_person_row_and_each_result_with_its_owner(self):
         self.assertEqual(db.user_version(self.path), 2)
-        self.assertEqual(db.init_db(self.path), 3)
+        self.assertEqual(db.init_db(self.path, target_version=3), 3)
         self.assertEqual(person_view(self.path), self.before)
         self.assertEqual((len(self.before[0]), len(self.before[1]), len(self.before[2])), (3, 3, 3))
         self.assertEqual(db.integrity_check(self.path), [])
 
     def test_ids_platoons_and_sessions_are_preserved(self):
-        db.init_db(self.path)
+        db.init_db(self.path, target_version=3)
         with db.reader(self.path) as c:
             self.assertEqual([tuple(r) for r in c.execute("SELECT id,email,platoon_id,active FROM users ORDER BY id")],
                              [(1, "boss@example.com", None, 1), (2, "dana@example.com", 1, 1), (3, "omer@example.com", 1, 1)])
@@ -60,7 +60,7 @@ class V2ToV3(unittest.TestCase):
             self.assertIsNone(c.execute("SELECT course_end FROM platoons").fetchone()[0])
 
     def test_pseudonyms_are_unique_random_32_hex_and_one_per_user(self):
-        db.init_db(self.path)
+        db.init_db(self.path, target_version=3)
         with db.reader(self.path) as c:
             ps = [r[0] for r in c.execute("SELECT pseudonym FROM users ORDER BY id")]
             parents = [r[0] for r in c.execute("SELECT pseudonym FROM pseudonyms")]
@@ -70,7 +70,7 @@ class V2ToV3(unittest.TestCase):
         self.assertNotEqual(ps, ["00000000000000000000000000000001", "00000000000000000000000000000002", "00000000000000000000000000000003"])
 
     def test_foreign_keys_after_upgrade(self):
-        db.init_db(self.path)
+        db.init_db(self.path, target_version=3)
         with db.reader(self.path) as c:
             fks = {(t, r[2]) for t in ("sessions", "results", "users", "instructor_platoons", "allowed_emails", "audit_log")
                    for r in c.execute(f"PRAGMA foreign_key_list({t})")}
@@ -98,7 +98,7 @@ class V2ToV3(unittest.TestCase):
         c.commit(); c.close()
         before = person_view(self.path)
         with self.assertRaises(StorageError):
-            db.init_db(self.path)
+            db.init_db(self.path, target_version=3)
         self.assertEqual(db.user_version(self.path), 2)
         self.assertEqual(person_view(self.path), before)
         with db.reader(self.path) as c:
@@ -111,18 +111,18 @@ class V2ToV3(unittest.TestCase):
         c.execute("INSERT INTO results(user_id,test_date,pushups) VALUES(999,'2026-03-03',5)")
         c.commit(); c.close()
         with self.assertRaises(StorageError) as cm:
-            db.init_db(self.path)
+            db.init_db(self.path, target_version=3)
         self.assertIn("row counts changed", str(cm.exception))
         self.assertEqual(db.user_version(self.path), 2)
         with db.reader(self.path) as c:
             self.assertEqual(c.execute("SELECT count(*) FROM results").fetchone()[0], 4)
 
     def test_idempotent(self):
-        db.init_db(self.path)
+        db.init_db(self.path, target_version=3)
         again = person_view(self.path)
         with db.reader(self.path) as c:
             ps = c.execute("SELECT pseudonym FROM users ORDER BY id").fetchall()
-        self.assertEqual(db.init_db(self.path), 3)
+        self.assertEqual(db.init_db(self.path, target_version=3), 3)
         self.assertEqual(person_view(self.path), again)
         with db.reader(self.path) as c:
             self.assertEqual(c.execute("SELECT pseudonym FROM users ORDER BY id").fetchall(), ps, "pseudonyms never change")
@@ -134,13 +134,13 @@ class V2ToV3(unittest.TestCase):
         def up():
             barrier.wait()
             try:
-                results.append(db.init_db(self.path))
+                results.append(db.init_db(self.path, target_version=3))
             except Exception as e:  # noqa: BLE001
                 errors.append(repr(e))
         ts = [threading.Thread(target=up) for _ in range(4)]
         [t.start() for t in ts]; [t.join() for t in ts]
         self.assertEqual((errors, results), ([], [3] * 4))
-        procs = [subprocess.Popen([sys.executable, "-m", "tests.workers", "init_only", self.path], cwd=ROOT,
+        procs = [subprocess.Popen([sys.executable, "-m", "tests.workers", "init_only", self.path, "3"], cwd=ROOT,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(5)]
         self.assertEqual([p.communicate(timeout=120)[0].strip() for p in procs], ["VERSION 3"] * 5)
         self.assertEqual(person_view(self.path), self.before)
@@ -154,7 +154,7 @@ class V1ToV3(unittest.TestCase):
             path = os.path.join(d, "baror.db")
             build_v1(path)
             before = person_view(path)
-            self.assertEqual(db.init_db(path), 3)
+            self.assertEqual(db.init_db(path, target_version=3), 3)
             self.assertEqual(person_view(path), before)
             self.assertEqual(db.integrity_check(path), [])
 

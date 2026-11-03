@@ -198,6 +198,14 @@ class TestShippedThresholds(unittest.TestCase):
         self.assertNotIn("verified", rs)
         self.assertFalse(hasattr(R, "verified"))
 
+    def test_the_shipped_file_is_parsed_once_not_per_grade(self):
+        from unittest import mock
+        scoring._shipped_rulesets.cache_clear()
+        with mock.patch.object(scoring.json, "loads", wraps=scoring.json.loads) as loads:
+            for _ in range(500):
+                scoring.current_ruleset(date(2026, 11, 3))
+        self.assertEqual(loads.call_count, 1)
+
     def test_there_is_no_overall_verdict(self):
         # Owner has not yet explained "כ.מ" or the overall pass rule: nothing may combine the tests.
         self.assertFalse(hasattr(scoring, "overall_status"))

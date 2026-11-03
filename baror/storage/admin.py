@@ -15,7 +15,7 @@ from typing import Any
 from baror.errors import AuthError, ConflictError, NotFoundError, ValidationError
 from baror.storage import allowlist, audit, db
 
-ROLES = ("cadet", "instructor", "admin")
+ROLES = ("cadet", "instructor", "admin", "chief")
 STAFF_ROLES = ("instructor", "admin")
 
 
@@ -79,9 +79,9 @@ def _do_set_role(c, actor, user_id, role) -> None:
     if role != "admin":
         _guard_last_admin(c, user_id)
     c.execute("UPDATE users SET role=? WHERE id=?", (role, user_id))
-    if role not in STAFF_ROLES:
+    if role not in STAFF_ROLES:   # cadet or chief: no platoon grants (a chief sees everything through baror.storage.chief)
         c.execute("DELETE FROM instructor_platoons WHERE instructor_id=?", (user_id,))
-    else:  # staff accounts are not platoon members
+    if role != "cadet":           # staff and chiefs are not platoon members
         c.execute("UPDATE users SET platoon_id=NULL WHERE id=?", (user_id,))
     audit.record(c, actor_id=actor, action="admin.set_role", target_user_id=user_id)
 

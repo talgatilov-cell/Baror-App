@@ -24,7 +24,7 @@ FMT = "%Y-%m-%dT%H:%M:%SZ"
 # any legal retention requirement is UNVERIFIED and is not legal advice.
 RETENTION_DAYS = 365
 # Actions that count as "somebody read this cadet's performance data" in the data-subject disclosure.
-DATA_READ_ACTIONS = ("cohort.summary", "cohort.cadet")
+DATA_READ_ACTIONS = ("cohort.summary", "cohort.cadet", "chief.cadet")
 
 
 def ts(now: dt.datetime | None = None) -> str:

@@ -13,6 +13,7 @@ Conventions
 """
 from __future__ import annotations
 
+import functools
 import json
 from dataclasses import dataclass, field
 from datetime import date
@@ -269,6 +270,12 @@ def load_rulesets(path: Path = THRESHOLDS_FILE) -> List[RuleSet]:
     return [ruleset_from_dict(d) for d in data["rulesets"]]
 
 
+@functools.lru_cache(maxsize=1)
+def _shipped_rulesets() -> Tuple[RuleSet, ...]:
+    """Static data shipped with the app (no user data), parsed once per process."""
+    return tuple(load_rulesets())
+
+
 def current_ruleset(on: date) -> RuleSet:
     """The shipped rule set in force on ``on`` (a test is graded by the rules of ITS date)."""
-    return select_ruleset(load_rulesets(), on)
+    return select_ruleset(_shipped_rulesets(), on)
