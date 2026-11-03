@@ -7,6 +7,7 @@ then been started and the caller sets the cookie), else None.
 * Do not open a ``st.form`` from inside another form; the caller renders these inside ``st.empty().container()``."""
 from __future__ import annotations
 
+import logging
 import math
 
 import streamlit as st
@@ -14,6 +15,7 @@ import streamlit as st
 from baror.auth import passwords, service
 from baror.config import Config
 from baror.errors import AuthError, BarorError, RateLimitedError
+from baror.logging_setup import log_event
 from baror.messages_he import render_exception, t
 from baror.ui import guards, session
 
@@ -48,19 +50,23 @@ def login_form(cfg: Config):
     ip, limiter = guards.client_ip(cfg), guards.limiter()
     wait = limiter.check_login(ip, email)
     if wait > 0:
+        log_event("login_blocked_address", level=logging.WARNING)
         _blocked(wait)
         return None
     if not guards.check_and_renew(cfg, "login", honeypot):
         limiter.record_login_failure(ip)                 # a script hammering the form is slowed like a guesser
+        log_event("bot_refused", level=logging.WARNING, form="login")
         st.error(t("bot_check_failed"))
         return None
     try:
         user = service.login(cfg.db_path, email, password)
     except RateLimitedError as exc:                      # per-account backoff: the attempt was refused, not guessed
+        log_event("login_rate_limited", level=logging.WARNING, email=email)
         _show(exc)
         return None
     except AuthError as exc:
         limiter.record_login_failure(ip, email)
+        log_event("login_failed", level=logging.WARNING, email=email)
         _show(exc)
         return None
     except BarorError as exc:
@@ -68,6 +74,7 @@ def login_form(cfg: Config):
         return None
     limiter.record_login_success(ip, email)
     session.start(cfg.db_path, user["id"], cfg.session_days)
+    log_event("login_ok", user_id=user["id"])
     return user
 
 
@@ -90,10 +97,12 @@ def register_form(cfg: Config):
     ip, limiter = guards.client_ip(cfg), guards.limiter()
     wait = limiter.check_register(ip)
     if wait > 0:
+        log_event("register_blocked_address", level=logging.WARNING)
         _blocked(wait)
         return None
     if not guards.check_and_renew(cfg, "register", honeypot):
         limiter.record_register_attempt(ip)
+        log_event("bot_refused", level=logging.WARNING, form="register")
         st.error(t("bot_check_failed"))
         return None
     gender = next((code for key, code in GENDERS.items() if t(key) == gender_label), None)
@@ -115,9 +124,12 @@ def register_form(cfg: Config):
     try:
         user = service.register(cfg.db_path, email=email, name=name, gender=gender, is_km=is_km, password=password)
     except BarorError as exc:
-        _show(exc)         # RegistrationDeniedError: the same text whatever the reason
+        # the user sees ONE text; the operator's log keeps the reason (its detail never contains the e-mail)
+        log_event("register_refused", level=logging.INFO, email=email, reason=getattr(exc, "detail", None))
+        _show(exc)
         return None
     session.start(cfg.db_path, user["id"], cfg.session_days)
+    log_event("register_ok", user_id=user["id"])
     return user
 
 
@@ -138,7 +150,9 @@ def password_change_form(cfg: Config, user: dict):
     try:
         service.change_password(cfg.db_path, user["id"], current, new)   # revokes every session of this user
     except BarorError as exc:
+        log_event("password_change_refused", level=logging.WARNING, user_id=user["id"], reason=exc.message_key)
         _show(exc)
         return None
     session.start(cfg.db_path, user["id"], cfg.session_days)             # a fresh session replaces the revoked one
+    log_event("password_changed", user_id=user["id"])
     return True

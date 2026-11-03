@@ -4,6 +4,7 @@ from __future__ import annotations
 import streamlit as st
 
 from baror.config import Config
+from baror.logging_setup import log_event
 from baror.messages_he import t
 from baror.ui import content, personal, session, staff
 
@@ -39,6 +40,7 @@ def render(cfg: Config, user: dict) -> None:
         st.divider()
         st.text(f"{t('account_label')}: {user['name']}")            # st.text: no Markdown interpretation of the name
         if st.button(t("btn_logout"), key="logout"):
+            log_event("logout", user_id=user["id"])
             session.end(cfg.db_path)
             session.clear_cookie()
             st.text(t("logged_out"))

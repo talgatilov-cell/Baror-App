@@ -5,10 +5,8 @@ from __future__ import annotations
 
 import streamlit as st
 
-from baror import config
-from baror.errors import BarorError
-from baror.messages_he import render_exception, t
-from baror.storage import db
+from baror import boundary, config, startup
+from baror.messages_he import t
 from baror.ui import auth_views, session, shell, theme
 
 
@@ -16,7 +14,7 @@ from baror.ui import auth_views, session, shell, theme
 def _startup(env_key: tuple):
     """Process-wide, no user data: configuration and the database schema (created or upgraded once per environment)."""
     cfg = config.from_env({k: v for k, v in env_key if v is not None})
-    db.init_db(cfg.db_path)
+    startup.run_startup_checks(cfg)        # data dir writable, tzdata, integrity BEFORE any migration, schema current
     return cfg
 
 
@@ -33,32 +31,29 @@ def _sign_in_page(cfg):
 
 
 def main() -> None:
-    icon = theme.ROOT / "logo.png"
-    st.set_page_config(page_title=t("page_title"), page_icon=str(icon) if icon.exists() else None, layout="centered")
-    try:
-        theme.apply()
-        cfg = _startup(config.env_key())
-        user = session.current_user(cfg.db_path, cfg.session_days)
+    theme.apply()
+    cfg = _startup(config.env_key())
+    user = session.current_user(cfg.db_path, cfg.session_days)
+    if user is None:
+        slot = st.empty()
+        with slot.container():
+            user = _sign_in_page(cfg)
         if user is None:
-            slot = st.empty()
-            with slot.container():
-                user = _sign_in_page(cfg)
-            if user is None:
-                return
-            slot.empty()                                          # remove the forms in the same run ...
-            session.set_cookie(st.session_state[session.TOKEN_KEY], cfg.session_days)   # ... and NO st.rerun()
-        if user["must_change_pw"]:
-            slot = st.empty()
-            with slot.container():
-                changed = auth_views.password_change_form(cfg, user)
-            if not changed:
-                return
-            slot.empty()
-            session.set_cookie(st.session_state[session.TOKEN_KEY], cfg.session_days)
-            user = session.current_user(cfg.db_path, cfg.session_days)
-        shell.render(cfg, user)
-    except BarorError as exc:       # expected failures only; the full error boundary is task T8
-        st.error(render_exception(exc))
+            return
+        slot.empty()                                          # remove the forms in the same run ...
+        session.set_cookie(st.session_state[session.TOKEN_KEY], cfg.session_days)   # ... and NO st.rerun()
+    if user["must_change_pw"]:
+        slot = st.empty()
+        with slot.container():
+            changed = auth_views.password_change_form(cfg, user)
+        if not changed:
+            return
+        slot.empty()
+        session.set_cookie(st.session_state[session.TOKEN_KEY], cfg.session_days)
+        user = session.current_user(cfg.db_path, cfg.session_days)
+    shell.render(cfg, user)
 
 
-main()
+_icon = theme.ROOT / "logo.png"
+st.set_page_config(page_title=t("page_title"), page_icon=str(_icon) if _icon.exists() else None, layout="centered")
+boundary.run_app(main)            # expected errors -> Hebrew message; bugs -> generic message + incident id, never a traceback

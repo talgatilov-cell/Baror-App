@@ -10,6 +10,7 @@ import streamlit as st
 from baror.config import Config
 from baror.domain.entry import grade_entry, parse_entry
 from baror.errors import BarorError
+from baror.logging_setup import log_event
 from baror.messages_he import render_exception, t
 from baror.storage import repo
 from baror.ui import charts
@@ -73,6 +74,7 @@ def personal_page(cfg: Config, user: dict) -> None:
             st.error(render_exception(exc))
             st.caption(t("input_kept"))
         else:
+            log_event("result_added", user_id=uid)
             st.success(t("saved"))
             if entry.pushups == 0:
                 st.warning(t("warn_zero_pushups"))
