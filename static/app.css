@@ -245,6 +245,8 @@ button[data-variant="segmented_control"]{flex:1 1 0; min-width:0; min-height:var
 [data-testid="stTable"] th,[data-testid="stTable"] td{text-align:start}
 /* bullet lists: the markers hang inside the start padding (they touched the card border in RTL) */
 [data-testid="stMarkdownContainer"] ul,[data-testid="stMarkdownContainer"] ol{padding-inline:1.25rem 0; margin-inline:0}
+/* Streamlit computes text-align:left for lists even in RTL: the bullet text hugged the left edge, far from its marker */
+[data-testid="stMarkdownContainer"] ul,[data-testid="stMarkdownContainer"] ol,[data-testid="stMarkdownContainer"] li{text-align:start}
 
 /* background: the original camouflage picture, served as a static file (never base64, never re-sent with the page), on a
    fixed layer BEHIND everything (background-attachment:fixed is ignored by iOS Safari). No text sits on the picture: all
