@@ -42,6 +42,9 @@ _CSS = """
 .stButton>button {{ background-color: #4a5c40; color: white !important; border-radius: 8px; width: 100%; border: none; font-weight: bold; }}
 .stButton>button:hover {{ background-color: #3b4a33; }}
 
+.st-key-hp_login, .st-key-hp_register {{ position: absolute !important; inset-inline-start: -10000px !important;
+    width: 1px !important; height: 1px !important; overflow: hidden !important; }}
+
 {i} .main .block-container, {i} [data-testid="stMainBlockContainer"] {{
     background-color: rgba(0, 0, 0, 0.75) !important; border-radius: 15px !important; padding: 2rem !important;
     margin-top: 1rem; box-shadow: 0 4px 15px rgba(0,0,0,0.5) !important; direction: rtl !important; }}

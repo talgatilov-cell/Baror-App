@@ -91,6 +91,7 @@ M = {
     "no_results_cadet": "אין תוצאות לצוער הזה.",
     # rate limit, bot check, session, storage
     "rate_limited": "בוצעו יותר מדי ניסיונות. נסו שוב בעוד {wait}.",
+    "honeypot_label": "שדה זה יש להשאיר ריק",
     "bot_check_failed": "בדיקת האבטחה לא הושלמה. יש לנסות שוב.",
     "session_expired": "פג תוקף ההתחברות. יש להיכנס מחדש. תוצאות שנשמרו קודם לא נפגעו.",
     "btn_retry": "ניסיון נוסף", "btn_refresh": "רענון",

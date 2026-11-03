@@ -7,13 +7,15 @@ then been started and the caller sets the cookie), else None.
 * Do not open a ``st.form`` from inside another form; the caller renders these inside ``st.empty().container()``."""
 from __future__ import annotations
 
+import math
+
 import streamlit as st
 
 from baror.auth import passwords, service
 from baror.config import Config
-from baror.errors import BarorError
+from baror.errors import AuthError, BarorError, RateLimitedError
 from baror.messages_he import render_exception, t
-from baror.ui import session
+from baror.ui import guards, session
 
 GENDERS = {"gender_male": "M", "gender_female": "F"}
 
@@ -22,23 +24,55 @@ def _show(exc: BarorError) -> None:
     st.error(render_exception(exc))
 
 
+def _honeypot(form: str):
+    """A field no human sees (moved off-screen by CSS, keyed container) but a script that fills every input will."""
+    with st.container(key=f"hp_{form}"):
+        return st.text_input(t("honeypot_label"), key=f"hp_{form}_value", autocomplete="off")
+
+
+def _blocked(wait: float) -> None:
+    """The address limit speaks with the SAME words as the per-account lock-out, so it says nothing extra."""
+    _show(RateLimitedError(params={"seconds": max(1, math.ceil(wait))}))
+
+
 def login_form(cfg: Config):
+    guards.issue_token(cfg, "login")
     with st.form("login"):
         email = st.text_input(t("field_email"), key="login_email", autocomplete="username")
         password = st.text_input(t("field_password"), type="password", key="login_pass", autocomplete="current-password")
+        honeypot = _honeypot("login")
         submitted = st.form_submit_button(t("btn_login"), type="primary")
     if not submitted:
         return None
+    # Order matters: everything cheap runs BEFORE the password hash (scrypt), so a flood costs almost nothing.
+    ip, limiter = guards.client_ip(cfg), guards.limiter()
+    wait = limiter.check_login(ip, email)
+    if wait > 0:
+        _blocked(wait)
+        return None
+    if not guards.check_and_renew(cfg, "login", honeypot):
+        limiter.record_login_failure(ip)                 # a script hammering the form is slowed like a guesser
+        st.error(t("bot_check_failed"))
+        return None
     try:
         user = service.login(cfg.db_path, email, password)
+    except RateLimitedError as exc:                      # per-account backoff: the attempt was refused, not guessed
+        _show(exc)
+        return None
+    except AuthError as exc:
+        limiter.record_login_failure(ip, email)
+        _show(exc)
+        return None
     except BarorError as exc:
         _show(exc)
         return None
+    limiter.record_login_success(ip, email)
     session.start(cfg.db_path, user["id"], cfg.session_days)
     return user
 
 
 def register_form(cfg: Config):
+    guards.issue_token(cfg, "register")
     st.caption(t("register_intro"))
     with st.form("register"):
         name = st.text_input(t("field_name"), key="reg_name", max_chars=80)
@@ -49,8 +83,18 @@ def register_form(cfg: Config):
         password = st.text_input(t("field_password"), type="password", key="reg_pass", autocomplete="new-password",
                                  help=t("password_rule"))
         confirm = st.text_input(t("field_password_confirm"), type="password", key="reg_pass2", autocomplete="new-password")
+        honeypot = _honeypot("register")
         submitted = st.form_submit_button(t("btn_register"), type="primary")
     if not submitted:
+        return None
+    ip, limiter = guards.client_ip(cfg), guards.limiter()
+    wait = limiter.check_register(ip)
+    if wait > 0:
+        _blocked(wait)
+        return None
+    if not guards.check_and_renew(cfg, "register", honeypot):
+        limiter.record_register_attempt(ip)
+        st.error(t("bot_check_failed"))
         return None
     gender = next((code for key, code in GENDERS.items() if t(key) == gender_label), None)
     problems = []
@@ -67,6 +111,7 @@ def register_form(cfg: Config):
     if password != confirm:
         st.error(t("password_confirm_mismatch"))
         return None
+    limiter.record_register_attempt(ip)                  # every attempt that reaches the password hash counts
     try:
         user = service.register(cfg.db_path, email=email, name=name, gender=gender, is_km=is_km, password=password)
     except BarorError as exc:

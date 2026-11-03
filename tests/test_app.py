@@ -14,6 +14,7 @@ from streamlit.testing.v1 import AppTest
 from baror.auth import passwords, service, sessions
 from baror.messages_he import ERRORS, render_error, t
 from baror.storage import allowlist, audit, db, ops, repo
+from baror.ui import guards
 from baror.ui import session as ui_session
 from baror.ui.text import esc
 
@@ -42,10 +43,15 @@ class AppCase(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.path = os.path.join(self._tmp.name, "app.db")
-        saved = {k: os.environ.get(k) for k in ("DB_PATH", "BAROR_COHORT_VIEWS", "SESSION_DAYS")}
+        saved = {k: os.environ.get(k) for k in ("DB_PATH", "BAROR_COHORT_VIEWS", "SESSION_DAYS", "BAROR_BOT_MIN_SECONDS",
+                                                "TRUSTED_PROXIES", "FORWARDED_ALLOW_IPS")}
         self.addCleanup(lambda: [os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v) for k, v in saved.items()])
         os.environ["DB_PATH"] = self.path
         os.environ.pop("SESSION_DAYS", None)
+        os.environ.pop("TRUSTED_PROXIES", None)
+        os.environ.pop("FORWARDED_ALLOW_IPS", None)
+        os.environ["BAROR_BOT_MIN_SECONDS"] = "0"        # AppTest submits instantly; tests/test_abuse_limits.py covers timing
+        guards.limiter().__init__(limits=guards.LIMITS)     # fresh counters per test (process-wide singleton)
         os.environ["BAROR_COHORT_VIEWS"] = "1" if self.cohort_views else "0"
         db.init_db(self.path)
         service.reset_unknown_email_backoff()
@@ -97,6 +103,8 @@ class SignIn(AppCase):
         at = self.fresh()
         self.assertFalse(at.exception)
         labels = [w.label for w in at.text_input]
+        self.assertEqual(labels.count(t("honeypot_label")), 2, "one honeypot per form")
+        labels = [l for l in labels if l != t("honeypot_label")]
         self.assertEqual(labels, [t("field_email"), t("field_password"), t("field_name"), t("field_email"),
                                   t("field_password"), t("field_password_confirm")])
         self.assertFalse([l for l in labels if "קוד" in l], "registration is by allowlist, not by invite code")

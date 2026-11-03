@@ -22,7 +22,9 @@ class ThemeScoping(unittest.TestCase):
 
     def test_every_look_specific_selector_is_scoped_by_the_signin_container(self):
         unscoped = [s for s in self.selectors() if not s.startswith((theme._IN, theme._OUT))]
-        self.assertEqual(sorted(unscoped), sorted([".stApp", ".stButton>button", ".stButton>button:hover"]))
+        allowed = [".stApp", ".stButton>button", ".stButton>button:hover",
+                   ".st-key-hp_login", ".st-key-hp_register"]     # the honeypots are hidden in BOTH looks
+        self.assertEqual(sorted(unscoped), sorted(allowed))
 
     def test_the_two_looks_are_mutually_exclusive(self):
         self.assertEqual(theme._IN, ".stApp:has(.st-key-signin)")
