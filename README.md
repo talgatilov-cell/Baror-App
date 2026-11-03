@@ -1,146 +1,157 @@
-# Baror App
+# בר-אור (Baror App)
 
-A Hebrew (right-to-left), phone-first Streamlit app for officer-course cadets: log 3 km run (or 6 km walk) times and
-push-ups, see progress, read tips. Instructors (own platoon) and the chief / deputy chief (all platoons, aggregates)
-have read-only screens that are **off by default**. Data lives in one SQLite file. Runtime packages: `streamlit`,
-`pandas`, `plotly` only; tests use `unittest` and `streamlit.testing.v1.AppTest` only.
+אפליקציית ווב בעברית (מימין לשמאל), בנויה קודם כול לטלפון, לצוערי קורס קצינים. הצוערים מתעדים תוצאות של ריצת 3 ק״מ (או הליכת 6 ק״מ לצוערים עם פטור ריצה) ושל שכיבות סמיכה, רואים את ההתקדמות מול הרף ומקבלים טיפים. הפקודים (מדריכים, ראש הקורס וסגנו, מנהל מערכת) רואים מסכים משלהם, בהרשאות מוגבלות ובתיעוד של כל צפייה.
 
-Operators: see [docs/runbook.md](docs/runbook.md). Decisions: [docs/adr/](docs/adr/). Release check:
-[docs/deploy-checklist.md](docs/deploy-checklist.md). Draft privacy notice for cadets (Hebrew, not approved):
-[docs/privacy-notice-he.md](docs/privacy-notice-he.md).
+> **סטטוס: גרסת הדגמה בפיתוח.** האפליקציה עדיין לא עלתה לשרת אמיתי, הודעת הפרטיות היא טיוטה שטרם אושרה, ויש עבודה פתוחה (ראו [docs/SESSION_NEXT_STEPS.md](docs/SESSION_NEXT_STEPS.md) אם הקובץ קיים אצלכם). אין להפעיל אותה על נתוני צוערים אמיתיים לפני אישור בעל הפרויקט והממונה על הפרטיות.
 
-## Run locally
+טכנולוגיה: Python עם `streamlit`, `pandas` ו-`plotly` בלבד. הנתונים נשמרים בקובץ SQLite אחד. הבדיקות משתמשות רק ב-`unittest` וב-`streamlit.testing.v1.AppTest`.
+
+## מי רואה מה
+
+| תפקיד | מה רואה ועושה |
+|---|---|
+| **צוער** | את התוצאות וההתקדמות של עצמו בלבד. מזין תוצאות, רואה היסטוריה וגרפים, מוסיף בקשת הקלה או פטור (טעונה אישור), מייצא את המידע שלו ל-PDF ויכול למחוק את החשבון. |
+| **מדריך** | קורא בלבד, רק את המחלקות שהוענקו לו במפורש. כל פתיחה של צוער בשמו נרשמת ביומן. |
+| **ראש הקורס / סגנו** (אותו תפקיד ואותו מסך) | לוח בקרה של כל הקורס, פרטי צוערים בשמם (נרשם ביומן), אישור או דחייה של בקשות הקלה ופטור, ודוחות מצטברים. |
+| **מנהל מערכת** | רואה את שלוש המחלקות במסך המחלקה (לא את לוח הבקרה של ראש הקורס). |
+
+ההרשמה היא רק לכתובות דואר שנמצאות ברשימת המורשים. קבוצות של פחות מ-5 צוערים לא מוצגות כמספרים לעולם. אין ציון עובר/נכשל כולל: כל בוחן מדורג בנפרד.
+
+מסכי המדריך וראש הקורס כבויים כברירת מחדל (`BAROR_COHORT_VIEWS=0`) עד שבעל הפרויקט מאשר מה נאמר לצוערים עליהם.
+
+## הדגמה מהירה
+
+    demo/run_demo.sh lan        # http://localhost:8501 ; בטלפון: http://<כתובת המחשב>:8501 (אותה רשת Wi-Fi)
+
+סיסמה לכל חשבונות ההדגמה: `baror-demo-2026`. חשבונות (בדומיין `@example.com`): `empty`, `one`, `two`, `twelve`, `walk` (צוערים), `ins` (מדריך מחלקה א), `chief` (ראש קורס), `admin` (מנהל מערכת). מסד ההדגמה נוצר מחדש אם מוחקים את `demo/demo.db`. **לעולם לא להריץ את ההדגמה על שרת פומבי.**
+
+## הרצה מקומית
 
     python -m venv .venv && . .venv/bin/activate
     pip install --require-hashes --only-binary=:all: --no-deps -r requirements.lock
-    DB_PATH=./data/baror.db python scripts/init_db.py      # creates the folder's database (the folder must exist)
+    DB_PATH=./data/baror.db python scripts/init_db.py      # יוצר את מסד הנתונים (התיקייה חייבת להתקיים)
     DB_PATH=./data/baror.db streamlit run app.py
 
-## Run the tests
+## הרצת הבדיקות
 
     python -m unittest discover -s tests -t .
 
-Four tests need root (they drop to uid 10001 to check volume permissions) and skip otherwise; the Docker section shows
-how to run them. `tests/regression/` is an opt-in suite for the old JSON-based app and is not part of the command above.
+ארבע בדיקות דורשות הרשאות root (הן יורדות למשתמש 10001 כדי לבדוק הרשאות של הכרך) ומדולגות אחרת. סעיף ה-Docker מראה איך להריץ אותן. חבילת `tests/regression/` היא אופציונלית, מיועדת לאפליקציה הישנה המבוססת JSON, ואינה חלק מהפקודה למעלה. הרצה מלאה אורכת כ-12 דקות.
 
-## Run with Docker
+## הרצה עם Docker
 
-    docker compose up -d --build        # http://127.0.0.1:8501, loopback only
+    docker compose up -d --build        # http://127.0.0.1:8501, מקומי בלבד (loopback)
     docker compose logs -f baror
-    docker compose down                 # the named volume `baror_data` keeps the database
+    docker compose down                 # הכרך `baror_data` שומר על מסד הנתונים
 
-Needs Docker Compose 2.24 or newer (the optional `baror.env`). The image runs as uid 10001 with a read-only root filesystem; `/data` (volume) and `/tmp` (tmpfs) are the only writable
-places. Before the server starts, `scripts/init_db.py` creates or upgrades the database and stops the container with a
-one-line error if `/data` is not writable or the file is not a database (it never overwrites it). Settings and secrets
-go in `./baror.env` (optional, never committed), one `KEY=value` per line.
+נדרש Docker Compose מגרסה 2.24 ומעלה (בגלל הקובץ האופציונלי `baror.env`). התמונה רצה כמשתמש 10001 עם מערכת קבצים לקריאה בלבד; רק `/data` (כרך) ו-`/tmp` (tmpfs) ניתנים לכתיבה. לפני עליית השרת, `scripts/init_db.py` יוצר או משדרג את מסד הנתונים, ועוצר את הקונטיינר עם שגיאה בשורה אחת אם אי אפשר לכתוב ל-`/data` או אם הקובץ אינו מסד נתונים (הוא לעולם לא דורס אותו). הגדרות וסודות נכתבים ב-`./baror.env` (אופציונלי, לעולם לא נשמר ב-git), שורה אחת `KEY=value` לכל הגדרה.
 
-Run the whole test suite, including the four root-only tests, inside the image (the repository is mounted read-only):
+הרצת כל הבדיקות בתוך התמונה, כולל ארבע בדיקות ה-root (המאגר מחובר לקריאה בלבד):
 
     docker build -t baror:test .
     docker run --rm --user 0 --tmpfs /tmp -v "$PWD":/src:ro -w /src baror:test python -m unittest discover -s tests -t .
 
-## Environment variables
+> בניית תמונת ה-Docker והרצתה עדיין לא נבדקו בפועל (אין Docker על מחשב הפיתוח).
 
-| Variable | Default | Meaning |
+## משתני סביבה
+
+| משתנה | ברירת מחדל | משמעות |
 |---|---|---|
-| `DB_PATH` | `/data/baror.db` | SQLite file. Its directory must exist and be writable by the app user. |
-| `SESSION_DAYS` | `14` | Lifetime of the "stay signed in" cookie, 1 to 90. |
-| `TZ_NAME` | `Asia/Jerusalem` | Time zone for "today" (the date a result is entered). Needs the `tzdata` package (in the lock file). |
-| `TRUSTED_PROXIES` | empty | Comma-separated **exact IP addresses** of the reverse proxies whose `X-Forwarded-For` header may be believed (no `*`, no ranges, no names). Empty means the header is ignored. **Set it when a proxy is in front** (the Docker bridge gateway for a host proxy): otherwise every cadet shares the proxy's address, one outsider can use up the shared sign-in limit for everybody, and the log shows a `proxy_untrusted` warning. |
-| `FORWARDED_ALLOW_IPS` | unset | Streamlit/uvicorn's own setting. Leave it unset. The app **refuses to start** if it contains `*`. |
-| `BAROR_BOT_MIN_SECONDS` | `2` | Minimum seconds between opening the sign-in or registration form and submitting it (bot check), 0 to 60. |
-| `LOG_LEVEL`, `LOG_FORMAT`, `LOG_SALT` | `INFO`, `json`, random per start | Log level, `json` or `text`, and the secret used to turn e-mail addresses into short tokens in the log. Set `LOG_SALT` to a fixed secret, or the tokens change at every restart. |
-| `BAROR_COHORT_VIEWS` | `0` | `1` shows the instructor and chief screens. Keep `0` until the owner has approved what cadets are told about those views. |
+| `DB_PATH` | `/data/baror.db` | קובץ ה-SQLite. התיקייה שלו חייבת להתקיים ולהיות ניתנת לכתיבה על ידי משתמש האפליקציה. |
+| `SESSION_DAYS` | `14` | משך החיים של עוגיית "השארת מחובר", 1 עד 90. |
+| `TZ_NAME` | `Asia/Jerusalem` | אזור הזמן של "היום" (התאריך שבו מוזנת תוצאה). דורש את החבילה `tzdata` (נמצאת בקובץ הנעילה). |
+| `TRUSTED_PROXIES` | ריק | **כתובות IP מדויקות**, מופרדות בפסיקים, של שרתי ה-proxy שמותר להאמין לכותרת `X-Forwarded-For` שלהם (בלי `*`, בלי טווחים, בלי שמות). ריק פירושו שהכותרת מתעלמת. **יש להגדיר כשיש proxy לפני האפליקציה** (שער גשר ה-Docker עבור proxy על המארח): אחרת כל הצוערים חולקים את כתובת ה-proxy, מתחזה אחד יכול לנצל את מכסת ההתחברות המשותפת של כולם, והיומן מציג אזהרת `proxy_untrusted`. |
+| `FORWARDED_ALLOW_IPS` | לא מוגדר | הגדרה של Streamlit/uvicorn עצמם. להשאיר לא מוגדר. האפליקציה **מסרבת לעלות** אם הערך כולל `*`. |
+| `BAROR_BOT_MIN_SECONDS` | `2` | מספר שניות מינימלי בין פתיחת טופס ההתחברות או ההרשמה לבין שליחתו (בדיקת בוטים), 0 עד 60. |
+| `LOG_LEVEL`, `LOG_FORMAT`, `LOG_SALT` | `INFO`, `json`, אקראי בכל הפעלה | רמת היומן, `json` או `text`, והסוד שבעזרתו כתובות דואר הופכות לאסימונים קצרים ביומן. מומלץ להגדיר `LOG_SALT` קבוע, אחרת האסימונים משתנים בכל הפעלה מחדש. |
+| `BAROR_COHORT_VIEWS` | `0` | `1` מציג את מסכי המדריך וראש הקורס. להשאיר `0` עד שבעל הפרויקט אישר מה נאמר לצוערים על המסכים האלה. |
+| `BAROR_SMTP_*` | לא מוגדר | הגדרות שרת הדואר לשליחת דוחות לראש הקורס (נדרש TLS). שליחה כבויה כברירת מחדל ומופעלת רק במסך ראש הקורס. עדיין לא נשלח דבר באמת. |
 
-Invalid values stop the start-up with a readable message. `FORWARDED_ALLOW_IPS` must **never** be `*`: with it a client can
-claim any address. Address limits (generous, a whole platoon may share one public address): 60 failed sign-ins per 10
-minutes and 100 registration attempts per hour per address, 8 failures per (address, account) per 10 minutes.
+ערכים לא תקינים עוצרים את ההפעלה עם הודעה קריאה. `FORWARDED_ALLOW_IPS` **אסור** שיהיה `*`: איתו כל לקוח יכול לטעון לכל כתובת. מגבלות לפי כתובת (נדיבות, מחלקה שלמה עשויה לחלוק כתובת ציבורית אחת): 60 ניסיונות התחברות כושלים ב-10 דקות, 100 ניסיונות הרשמה בשעה לכל כתובת, ו-8 כשלונות לכל זוג (כתובת, חשבון) ב-10 דקות.
 
-## Backups and restore
+## גיבויים ושחזור
 
     python scripts/backup.py --db /data/baror.db --dir /data/backups --keep 14
 
-Uses SQLite's online backup, so it is safe while the app runs. Writes `baror-YYYYMMDD.db` (mode 0600; a second run on
-the same day writes `-HHMMSS`), verifies the copy, keeps the newest `--keep` files. In Docker:
+הסקריפט משתמש בגיבוי המקוון של SQLite, ולכן בטוח להרצה בזמן שהאפליקציה פועלת. הוא כותב `baror-YYYYMMDD.db` (הרשאות 0600; הרצה שנייה באותו יום כותבת `-HHMMSS`), מאמת את ההעתק ושומר את `--keep` הקבצים החדשים ביותר. ב-Docker:
 
     docker compose exec baror python scripts/backup.py --db /data/baror.db --dir /data/backups
 
-Schedule it from the host (cron or a systemd timer) once a day. Copy backups off the machine yourself. They hold
-password hashes and performance data.
+מומלץ לתזמן מהמארח (cron או systemd timer) פעם ביום. את הגיבויים יש להעתיק מחוץ למכונה בעצמכם. הם כוללים גיבובי סיסמאות ונתוני ביצועים.
 
-**Restore (stop the app first):**
+> **לפני ההפעלה הראשונה של הגרסה הזו על מסד נתונים אמיתי (שדרוג סכמה מ-v6 ל-v8) יש לגבות אותו.**
+
+**שחזור (קודם עוצרים את האפליקציה):**
 
     docker compose stop baror
     docker compose run --rm --no-deps baror python scripts/backup.py --restore /data/backups/baror-20261102.db --db /data/baror.db
     docker compose start baror
 
-The current database is kept as `baror.db.before-restore` (it still holds the identity link of everybody: delete it when you
-no longer need it). A backup that fails its integrity check is refused.
+מסד הנתונים הנוכחי נשמר בשם `baror.db.before-restore` (הוא עדיין כולל את הקישור לזהות של כולם: יש למחוק אותו כשאין בו עוד צורך). גיבוי שנכשל בבדיקת התקינות נדחה.
 
-## Retention (privacy)
+## שמירת נתונים ופרטיות
 
-Six calendar months after a platoon's course ends, the job de-identifies its cadets: name, e-mail, password hash and the
-link to their results are deleted; the results stay under a random pseudonym. Set the course end once per platoon:
+שישה חודשים קלנדריים אחרי סיום הקורס של מחלקה, המערכת מסירה את הזיהוי של צוריה: השם, כתובת הדואר, גיבוב הסיסמה והקישור לתוצאות נמחקים, והתוצאות נשארות תחת כינוי אקראי. את מועד סיום הקורס מגדירים פעם אחת לכל מחלקה:
 
     python scripts/admin_users.py --db /data/baror.db course-end "Platoon A" 2026-12-31
 
-Run daily from the host's scheduler, always `--dry-run` first after changing a date (de-identification cannot be undone):
+מריצים מדי יום מהמתזמן של המארח, ותמיד עם `--dry-run` קודם לכן אחרי שינוי תאריך (אי אפשר לבטל הסרת זיהוי):
 
     docker compose exec baror python scripts/retention.py --db /data/baror.db --backup-dir /data/backups --dry-run
     docker compose exec baror python scripts/retention.py --db /data/baror.db --backup-dir /data/backups
 
-It also deletes backups older than six months and every backup that still holds a deleted link, then writes a fresh one.
-Output is counts only. **Not reachable by the job:** copies outside the data volume (host snapshots, off-host backups),
-`baror.db.before-restore`, `users.json.premigration`, and the audit log (its own 365-day purge is a number the owner has
-not confirmed). Cadets without a platoon or whose platoon has no course end are never deleted automatically.
-See [ADR-0002](docs/adr/0002-pseudonymized-retention.md).
+הסקריפט גם מוחק גיבויים ישנים משישה חודשים ואת כל גיבוי שעדיין מחזיק קישור שנמחק, ואז כותב גיבוי חדש. הפלט הוא מספרים בלבד. **מה שהסקריפט לא יכול להגיע אליו:** עותקים מחוץ לכרך הנתונים (תמונות מצב של המארח, גיבויים מחוץ למכונה), `baror.db.before-restore`, `users.json.premigration`, ויומן הביקורת (מחיקה אוטומטית שלו אחרי 365 ימים היא מספר שבעל הפרויקט טרם אישר). צוערים ללא מחלקה, או שלמחלקתם אין תאריך סיום קורס, אינם נמחקים אוטומטית. ראו [ADR-0002](docs/adr/0002-pseudonymized-retention.md).
 
-## Operator commands
+טיוטת הודעת הפרטיות לצוערים (בעברית, לא מאושרת): [docs/privacy-notice-he.md](docs/privacy-notice-he.md).
 
-All take `--db /data/baror.db` (or the `BAROR_DB` variable). In Docker prefix them with `docker compose exec baror`.
+## דוחות מצטברים
 
-| Script | Purpose |
+המערכת מפיקה דוחות PDF מצטברים לראש הקורס, בלי שמות: שבועי בכל יום חמישי, וחודשי ביום האחרון של החודש (או ביום חמישי שלפניו כשהוא יוצא בשישי או בשבת). הרצה יומית מה-cron:
+
+    python scripts/generate_reports.py --db /data/baror.db            # אפשר גם --date, --since, --dry-run
+
+ראש הקורס מוריד את הדוחות מהסעיף "דוחות". שליחה אוטומטית בדואר אלקטרוני כבויה כברירת מחדל. פרטים בסעיף 9 ב-[docs/runbook.md](docs/runbook.md) וב-ADR 0003.
+
+## פקודות למפעיל
+
+כולן מקבלות `--db /data/baror.db` (או את המשתנה `BAROR_DB`). ב-Docker מוסיפים לפניהן `docker compose exec baror`.
+
+| סקריפט | מטרה |
 |---|---|
-| `scripts/allowlist.py add EMAIL [--role cadet\|instructor] [--platoon NAME]`, `remove`, `list [--status pending\|used]`, `import FILE.csv [--dry-run] [--strict] [--create-platoons] [--delimiter ';']` | Who may register. CSV header `email[,role][,platoon]`. Removing an entry never deletes an account. |
-| `scripts/admin_users.py list`, `set-role EMAIL cadet\|instructor\|admin\|chief`, `deactivate EMAIL`, `reactivate EMAIL`, `platoon-add NAME`, `assign EMAIL PLATOON\|-`, `grant EMAIL PLATOON`, `revoke EMAIL PLATOON`, `course-end PLATOON YYYY-MM-DD\|-` | Roles, platoons, instructor grants, retention clock. Every change is audited. The first admin is made with `set-role`. |
-| `scripts/backup.py`, `scripts/retention.py`, `scripts/init_db.py` | See above. |
-| `scripts/migrate_json_to_sqlite.py --json users.json --db /data/baror.db [--rejects-dir DIR]` | One-time import from the old JSON app. |
+| `scripts/allowlist.py add EMAIL [--role cadet\|instructor] [--platoon NAME]`, `remove`, `list [--status pending\|used]`, `import FILE.csv [--dry-run] [--strict] [--create-platoons] [--delimiter ';']` | מי רשאי להירשם. כותרת ה-CSV: `email[,role][,platoon]`. הסרת רשומה לעולם לא מוחקת חשבון. |
+| `scripts/admin_users.py list`, `set-role EMAIL cadet\|instructor\|admin\|chief`, `deactivate EMAIL`, `reactivate EMAIL`, `platoon-add NAME`, `assign EMAIL PLATOON\|-`, `grant EMAIL PLATOON`, `revoke EMAIL PLATOON`, `course-end PLATOON YYYY-MM-DD\|-` | תפקידים, מחלקות, הענקת גישה למדריכים, שעון השמירה. כל שינוי נרשם ביומן. מנהל המערכת הראשון נוצר בעזרת `set-role`. |
+| `scripts/backup.py`, `scripts/retention.py`, `scripts/init_db.py`, `scripts/generate_reports.py` | ראו למעלה. |
+| `scripts/migrate_json_to_sqlite.py --json users.json --db /data/baror.db [--rejects-dir DIR]` | ייבוא חד-פעמי מהאפליקציה הישנה המבוססת JSON. |
 
-## Migrating from the old `users.json`
+## מעבר מ-`users.json` הישן
 
     python scripts/migrate_json_to_sqlite.py --json /path/users.json --db /data/baror.db
 
-Idempotent, never modifies the original. Passwords are hashed and every migrated account must change its password at the
-next sign-in. Exit code 2 means some records were rejected: read `migration_rejects.json` (mode 0600, passwords redacted).
-It leaves `users.json.premigration`, a read-only copy **with the old plaintext passwords**: delete it, and the original
-`users.json`, once the import is verified.
+הסקריפט אידמפוטנטי ולעולם לא משנה את המקור. הסיסמאות מגובבות וכל חשבון שהועבר חייב להחליף סיסמה בכניסה הבאה. קוד יציאה 2 פירושו שחלק מהרשומות נדחו: קראו את `migration_rejects.json` (הרשאות 0600, סיסמאות מוסתרות). הסקריפט משאיר את `users.json.premigration`, עותק לקריאה בלבד **עם הסיסמאות הישנות בטקסט גלוי**: יש למחוק אותו, ואת `users.json` המקורי, לאחר שהייבוא אומת.
 
-## Dependencies
+## תלויות
 
-`requirements.txt` holds the three direct pins; `requirements.lock` holds every package with its hash and is what the
-image and CI install (`--require-hashes`). Dependabot opens update pull requests for `requirements.txt`, the Docker base
-image (tag and digest) and the GitHub Actions, weekly. It does **not** update the lock file. After merging a pip update,
-regenerate it on the image platform and check it installs:
+`requirements.txt` כולל את שלוש התלויות הישירות; `requirements.lock` כולל כל חבילה עם הגיבוב שלה, ובו משתמשות התמונה וה-CI (`--require-hashes`). Dependabot פותח מדי שבוע בקשות עדכון עבור `requirements.txt`, תמונת הבסיס של Docker (תג ו-digest) ו-GitHub Actions. הוא **אינו** מעדכן את קובץ הנעילה. אחרי מיזוג עדכון pip יש ליצור אותו מחדש על פלטפורמת התמונה ולוודא שהוא מותקן:
 
     pip install --dry-run --ignore-installed --quiet --report linux-x86_64.json --only-binary=:all: \
         --platform manylinux_2_28_x86_64 --platform manylinux_2_27_x86_64 --platform manylinux_2_24_x86_64 \
         --platform manylinux_2_17_x86_64 --platform manylinux2014_x86_64 --python-version 3.12 \
         --target /tmp/lock-target -r requirements.txt
-    python tools/make_lock.py requirements.lock requirements.txt linux-x86_64.json      # stdlib only; pass more reports to add targets
-    pip install --require-hashes --only-binary=:all: --no-deps -r requirements.lock      # in a clean venv, must succeed
+    python tools/make_lock.py requirements.lock requirements.txt linux-x86_64.json      # stdlib בלבד; אפשר להעביר עוד דוחות להוספת פלטפורמות
+    pip install --require-hashes --only-binary=:all: --no-deps -r requirements.lock      # בסביבה נקייה, חייב להצליח
 
-Do not use `--platform manylinux2014_x86_64` alone: pandas 3 has no wheel for it, so pip finds no matching version.
-Check the result with `docker build .` before merging. Do not add a package without asking the owner.
+אין להשתמש ב-`--platform manylinux2014_x86_64` לבדו: ל-pandas 3 אין עבורו חבילה, ולכן pip לא מוצא גרסה מתאימה. יש לבדוק את התוצאה עם `docker build .` לפני מיזוג. אין להוסיף חבילה בלי לשאול את בעל הפרויקט.
 
 ## Reverse proxy
 
-The app speaks plain HTTP on `127.0.0.1:8501`. Put an HTTPS proxy in front (the session cookie is a bearer token and is
-`Secure` only over HTTPS) with HSTS. Streamlit shows a blank page for an unknown URL with two or more segments
-(`/nope/deeper`): make the proxy redirect everything that is not `/` or Streamlit's own paths (`/_stcore/`, `/app/`) to `/`.
-Pass the real client address in `X-Forwarded-For`; the per-IP limit task will say which proxy addresses to trust.
+האפליקציה מדברת HTTP פשוט על `127.0.0.1:8501`. יש להציב לפניה proxy עם HTTPS (עוגיית ההתחברות היא אסימון נושא, ו-`Secure` רק מעל HTTPS) ועם HSTS. Streamlit מציג עמוד ריק לכתובת לא מוכרת עם שני מקטעים או יותר (`/nope/deeper`): יש להגדיר ל-proxy להפנות לכתובת `/` כל מה שאינו `/` או הנתיבים של Streamlit עצמו (`/_stcore/`, `/app/`). יש להעביר את כתובת הלקוח האמיתית ב-`X-Forwarded-For`, ולהגדיר אותה ב-`TRUSTED_PROXIES`.
 
 ## CI
 
-`.github/workflows/docker-publish.yml`: tests first (hash-checked install, `unittest`), then the image is built and pushed
-to ghcr.io only from `main` or a `v*` tag. No `pull_request` trigger. The actions are still on version tags: the owner must
-confirm the candidate commit SHAs listed in the workflow, then pin them.
+`.github/workflows/docker-publish.yml`: קודם הבדיקות (התקנה עם בדיקת גיבובים, `unittest`), ואז התמונה נבנית ונדחפת ל-ghcr.io רק מ-`main` או מתג `v*`. אין טריגר `pull_request`. ה-actions עדיין מוצמדים לתגי גרסה: בעל הפרויקט צריך לאשר את גיבובי ה-commit המוצעים בקובץ ה-workflow ואז להצמיד אותם.
+
+## מסמכים נוספים
+
+- למפעיל: [docs/runbook.md](docs/runbook.md)
+- החלטות תכנון: [docs/adr/](docs/adr/)
+- בדיקה לפני שחרור: [docs/deploy-checklist.md](docs/deploy-checklist.md)
