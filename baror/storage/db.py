@@ -200,11 +200,41 @@ ALTER TABLE users_v4 RENAME TO users;
 CREATE INDEX idx_users_platoon ON users(platoon_id)
 """
 
+# Schema v5: a date CHECK that holds on EVERY SQLite build. Found by running the suite inside the production image
+# (Debian bookworm, SQLite 3.40.1): there ``date('2026-02-31')`` returns '2026-02-31' unchanged, so the v1..v4 check
+# ``date(x)=x`` accepted impossible dates (newer builds normalise them to '2026-03-03'). ``date(julianday(x))`` is
+# normalised on both, so ``date(julianday(x))=x`` refuses 2026-02-31, 2026-02-30, 2026-04-31 and 2026-02-29 everywhere.
+# Rebuilds ``results`` and ``platoons`` (the column ``course_end``), foreign keys off; a row that already violates the
+# stricter check aborts the whole migration (the app and the JSON migration never stored one) instead of being dropped.
+SCHEMA_V5 = """
+CREATE TABLE results_v5(
+ id INTEGER PRIMARY KEY,
+ pseudonym TEXT NOT NULL REFERENCES pseudonyms(pseudonym) ON DELETE CASCADE,
+ test_date TEXT NOT NULL CHECK(date(test_date) IS NOT NULL AND date(julianday(test_date))=test_date),
+ run_tenths INTEGER CHECK(run_tenths IS NULL OR run_tenths BETWEEN 1 AND 72000),
+ pushups INTEGER CHECK(pushups IS NULL OR pushups BETWEEN 0 AND 300),
+ created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+ CHECK(run_tenths IS NOT NULL OR pushups IS NOT NULL));
+INSERT INTO results_v5(id,pseudonym,test_date,run_tenths,pushups,created_at)
+ SELECT id,pseudonym,test_date,run_tenths,pushups,created_at FROM results;
+DROP TABLE results;
+ALTER TABLE results_v5 RENAME TO results;
+CREATE INDEX idx_results_pseudonym_date ON results(pseudonym,test_date);
+CREATE TABLE platoons_v5(
+ id INTEGER PRIMARY KEY,
+ name TEXT NOT NULL UNIQUE CHECK(name=trim(name) AND length(name) BETWEEN 1 AND 60),
+ created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+ course_end TEXT CHECK(course_end IS NULL OR (date(course_end) IS NOT NULL AND date(julianday(course_end))=course_end)));
+INSERT INTO platoons_v5(id,name,created_at,course_end) SELECT id,name,created_at,course_end FROM platoons;
+DROP TABLE platoons;
+ALTER TABLE platoons_v5 RENAME TO platoons
+"""
+
 # user_version -> script that upgrades from (version-1). Append only; never edit a released entry.
-MIGRATIONS: dict[int, str] = {1: SCHEMA_V1, 2: SCHEMA_V2, 3: SCHEMA_V3, 4: SCHEMA_V4}
+MIGRATIONS: dict[int, str] = {1: SCHEMA_V1, 2: SCHEMA_V2, 3: SCHEMA_V3, 4: SCHEMA_V4, 5: SCHEMA_V5}
 LATEST_VERSION = max(MIGRATIONS)
 # Versions whose script rebuilds a table that other tables reference: run with foreign_keys=OFF + foreign_key_check.
-_FK_OFF_VERSIONS = frozenset({2, 3, 4})
+_FK_OFF_VERSIONS = frozenset({2, 3, 4, 5})
 
 
 def _translate(exc: sqlite3.Error, what: str) -> Exception:
@@ -354,9 +384,10 @@ def _apply_migration(conn: sqlite3.Connection, version: int) -> None:
 
 def _row_counts(conn: sqlite3.Connection, version: int):
     """Rows that a rebuilding migration must carry over unchanged (v3 joins results to users: an orphan would vanish)."""
-    if version not in (3, 4):
+    if version not in (3, 4, 5):
         return None
-    return tuple(conn.execute(f"SELECT count(*) FROM {t}").fetchone()[0] for t in ("users", "results", "sessions"))
+    tables = ("users", "results", "sessions") + (("platoons",) if version == 5 else ())
+    return tuple(conn.execute(f"SELECT count(*) FROM {t}").fetchone()[0] for t in tables)
 
 
 def _split(script: str) -> list[str]:

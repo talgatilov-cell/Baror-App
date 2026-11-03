@@ -1,4 +1,4 @@
-"""Schema v3 -> v4: the `chief` role. Only the role CHECK changes; every row must survive."""
+"""Schema v3 -> v4 (each run stops at v4): the `chief` role. Only the role CHECK changes; every row must survive."""
 import os
 import sqlite3
 import tempfile
@@ -27,7 +27,7 @@ class V3ToV4(unittest.TestCase):
             self.ps = [tuple(r) for r in c.execute("SELECT id,pseudonym,platoon_id,active FROM users ORDER BY id")]
 
     def test_upgrade_keeps_everything_and_pseudonyms_do_not_change(self):
-        self.assertEqual(db.init_db(self.path), 4)
+        self.assertEqual(db.init_db(self.path, target_version=4), 4)
         self.assertEqual(person_view(self.path), self.before)
         with db.reader(self.path) as c:
             self.assertEqual([tuple(r) for r in c.execute("SELECT id,pseudonym,platoon_id,active FROM users ORDER BY id")], self.ps)
@@ -35,7 +35,7 @@ class V3ToV4(unittest.TestCase):
         self.assertEqual(db.integrity_check(self.path), [])
 
     def test_chief_is_accepted_and_unknown_roles_are_not(self):
-        db.init_db(self.path)
+        db.init_db(self.path, target_version=4)
         with db.reader(self.path) as c:
             sql = c.execute("SELECT sql FROM sqlite_master WHERE name='users'").fetchone()[0]
         self.assertIn("'chief'", sql)
@@ -49,7 +49,7 @@ class V3ToV4(unittest.TestCase):
             c.close()
 
     def test_child_tables_still_point_at_users_and_nothing_temporary_survives(self):
-        db.init_db(self.path)
+        db.init_db(self.path, target_version=4)
         with db.reader(self.path) as c:
             fks = {(t, r[2]) for t in ("sessions", "instructor_platoons", "allowed_emails", "audit_log")
                    for r in c.execute(f"PRAGMA foreign_key_list({t})")}
@@ -60,10 +60,10 @@ class V3ToV4(unittest.TestCase):
         self.assertNotIn("users_v4", sql)
 
     def test_idempotent_and_a_fresh_database_has_the_same_shape(self):
-        db.init_db(self.path)
-        self.assertEqual(db.init_db(self.path), 4)
+        db.init_db(self.path, target_version=4)
+        self.assertEqual(db.init_db(self.path, target_version=4), 4)
         fresh = os.path.join(self._tmp.name, "fresh.db")
-        db.init_db(fresh)
+        db.init_db(fresh, target_version=4)
 
         def shape(p):
             with db.reader(p) as c:
@@ -78,7 +78,7 @@ class V3ToV4(unittest.TestCase):
         c.commit()
         c.close()
         with self.assertRaises(StorageError):
-            db.init_db(self.path)
+            db.init_db(self.path, target_version=4)
         self.assertEqual(db.user_version(self.path), 3)
 
 
