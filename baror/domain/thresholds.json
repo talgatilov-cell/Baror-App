@@ -1,0 +1,55 @@
+{
+  "rulesets": [
+    {
+      "version": "owner-confirmed-2026-11-02",
+      "effective_from": "2000-01-01",
+      "source_ref": "numbers taken from the app's original app.py; no official document cited",
+      "confirmation": "confirmed by owner, 2026-11-02",
+      "note": "effective_from is a sentinel (real date unknown). Times are in deciseconds. The walk track applies the same 66:00 to both sexes and has no excellent level. No overall verdict: each test is graded separately.",
+      "thresholds": [
+        {
+          "metric": "pushups",
+          "sex": "female",
+          "direction": "higher",
+          "pass_limit": 11,
+          "excellent_limit": 30
+        },
+        {
+          "metric": "pushups",
+          "sex": "male",
+          "direction": "higher",
+          "pass_limit": 22,
+          "excellent_limit": 36
+        },
+        {
+          "metric": "run_3km",
+          "sex": "female",
+          "direction": "lower",
+          "pass_limit": 11800,
+          "excellent_limit": 8800
+        },
+        {
+          "metric": "run_3km",
+          "sex": "male",
+          "direction": "lower",
+          "pass_limit": 9400,
+          "excellent_limit": 7500
+        },
+        {
+          "metric": "walk_6km",
+          "sex": "female",
+          "direction": "lower",
+          "pass_limit": 39600,
+          "excellent_limit": null
+        },
+        {
+          "metric": "walk_6km",
+          "sex": "male",
+          "direction": "lower",
+          "pass_limit": 39600,
+          "excellent_limit": null
+        }
+      ]
+    }
+  ]
+}
