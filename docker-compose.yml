@@ -1,13 +1,41 @@
+# Run:  docker compose up -d --build        Stop:  docker compose down      (the named volume keeps the data)
+# Settings and secrets: create ./baror.env (NOT committed) with KEY=value lines, e.g. SESSION_DAYS=14 or
+# BAROR_COHORT_VIEWS=1. They win because they are not repeated under `environment` below.
 services:
-  app:
+  baror:
     build: .
+    image: baror:local
     ports:
-      - "8501:8501"
+      - "127.0.0.1:8501:8501"          # plain HTTP on loopback only: put an HTTPS reverse proxy in front
+    env_file:
+      - path: ./baror.env
+        required: false
     environment:
-      USERS_FILE: /data/users.json
-    volumes:
-      - app_data:/data
+      DB_PATH: /data/baror.db
+      # BAROR_COHORT_VIEWS stays OFF unless baror.env sets it to 1 (the instructor and chief screens wait for the
+      # owner's approval of what cadets are told).
+      #
+      # TRUSTED_PROXIES (in baror.env): the exact address(es) of the reverse proxy, e.g. the Docker bridge gateway
+      # (`docker network inspect <project>_default`). X-Forwarded-For is believed ONLY from those addresses; without it
+      # all cadets share the proxy's address for rate limiting.
+      # NEVER set FORWARDED_ALLOW_IPS to "*": a client could then claim any address (the app refuses to start).
+      # LOG_SALT (in baror.env): a fixed secret, so the e-mail tokens in the log survive restarts.
+    read_only: true                     # root filesystem read-only; only /data (volume) and /tmp (tmpfs) are writable
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 256
     restart: unless-stopped
-
+    volumes:
+      - baror_data:/data                # must stay writable: SQLite WAL creates -wal and -shm here
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 volumes:
-  app_data:
+  baror_data:

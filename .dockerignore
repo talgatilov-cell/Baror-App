@@ -1,8 +1,32 @@
+# The Dockerfile copies an explicit list; this keeps secrets, data and noise out of the build context as well.
 .git
-.gitignore
+.github
+.idea
+.claude
+.vscode
 .venv
 venv
 __pycache__
 *.py[cod]
-users.json
+tests
+docs
+*.md
+Dockerfile
+docker-compose.yml
+.dockerignore
+.gitignore
+# secrets and data: never in an image
 .env
+*.env
+baror.env
+users.json
+users.json.*
+migration_rejects*.json
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+data
+backups
+.streamlit/secrets.toml

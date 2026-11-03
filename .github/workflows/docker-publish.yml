@@ -1,41 +1,68 @@
-name: Build and publish Docker image
+name: docker-publish
 
+# Triggers: pushes to main, version tags and a manual run. Deliberately NO pull_request trigger: a pull request from a
+# fork must never run with access to the registry or the repository token.
 on:
   push:
-    branches:
-      - main
+    branches: [main]
+    tags: ["v*"]
   workflow_dispatch:
 
-permissions:
-  contents: read
-  packages: write
+permissions: {}
+
+# ---------------------------------------------------------------------------------------------------------------
+# OWNER TO CONFIRM against the official repositories, then replace the tags below by `@<sha> # <tag>`.
+# Tags can move, a commit SHA cannot. These candidate SHAs were resolved by a research agent from the GitHub API and
+# are NOT verified; do not paste them in before checking each one on the release page of its tag:
+#   actions/checkout           v4.4.0   11d5960a326750d5838078e36cf38b85af677262
+#   actions/setup-python       v6.3.0   ece7cb06caefa5fff74198d8649806c4678c61a1
+#   docker/setup-buildx-action v3.12.0  8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+#   docker/login-action        v3.7.0   c94ce9fb468520275223c153574b00df6fe4bcc9
+#   docker/build-push-action   v6.19.2  10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+# ---------------------------------------------------------------------------------------------------------------
 
 jobs:
-  publish:
+  test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install the locked dependencies (hash-checked)
+        run: pip install --no-cache-dir --require-hashes --only-binary=:all: --no-deps -r requirements.lock
+      - name: Unit tests
+        run: python -m unittest discover -s tests -t .
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+  publish:
+    needs: test
+    # a manual run from another branch must not publish
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Prepare image name
         id: image
         run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
-
-      - name: Build and publish
-        uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           tags: |
-            ${{ steps.image.outputs.name }}:latest
             ${{ steps.image.outputs.name }}:${{ github.sha }}
+            ${{ steps.image.outputs.name }}:latest

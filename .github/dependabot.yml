@@ -1,0 +1,17 @@
+# Weekly update pull requests. NOTE: Dependabot updates requirements.txt (the three direct pins) but NOT
+# requirements.lock (hashes of every package). After merging a pip update, regenerate the lock file
+# (procedure: README, section "Dependencies").
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker          # bumps the base image tag and digest in the Dockerfile together
+    directory: "/"
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly

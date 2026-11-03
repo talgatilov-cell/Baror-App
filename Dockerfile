@@ -1,35 +1,48 @@
-FROM python:3.12-slim AS builder
-
-ENV VIRTUAL_ENV=/opt/venv
-RUN python -m venv "$VIRTUAL_ENV"
-ENV PATH="$VIRTUAL_ENV/bin:$PATH"
-
+# syntax=docker/dockerfile:1
+#
+# Base image: tag AND digest. The tag says what we intend, the digest makes the build reproducible.
+# Dependabot (package-ecosystem "docker", see .github/dependabot.yml) opens a pull request that bumps tag and
+# digest together; read it, run the tests, then merge. To refresh by hand:
+#     docker pull python:3.12-slim-bookworm && docker image inspect python:3.12-slim-bookworm   # see RepoDigests
+# Digest below resolved on 2026-11-03.
+FROM python:3.12-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337 AS builder
+ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /build
-COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+COPY requirements.lock .
+# Hash-checked, wheels only, no dependency resolution: exactly the packages of the lock file (tzdata included).
+RUN python -m venv /opt/venv \
+ && /opt/venv/bin/pip install --require-hashes --only-binary=:all: --no-deps -r requirements.lock
 
-FROM python:3.12-slim AS runtime
-
-ENV VIRTUAL_ENV=/opt/venv \
-    PATH="/opt/venv/bin:$PATH" \
-    PYTHONDONTWRITEBYTECODE=1 \
+FROM python:3.12-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337 AS runtime
+ENV PATH=/opt/venv/bin:$PATH \
     PYTHONUNBUFFERED=1 \
-    USERS_FILE=/data/users.json
-
-WORKDIR /app
-RUN groupadd --system --gid 10001 app && \
-    useradd --system --uid 10001 --gid app --home-dir /app app && \
-    mkdir -p /data && chown app:app /data
-
+    PYTHONDONTWRITEBYTECODE=1 \
+    HOME=/tmp \
+    DB_PATH=/data/baror.db \
+    STREAMLIT_SERVER_HEADLESS=true \
+    STREAMLIT_SERVER_PORT=8501 \
+    STREAMLIT_SERVER_ADDRESS=0.0.0.0 \
+    STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+# HOME=/tmp: the root filesystem is read-only in compose and /tmp is a tmpfs there. /data is the only persistent,
+# writable place (SQLite WAL creates -wal and -shm next to the database, so the directory itself must be writable).
+RUN groupadd --gid 10001 baror \
+ && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /tmp --shell /usr/sbin/nologin baror \
+ && mkdir -p /data /app \
+ && chown 10001:10001 /data
 COPY --from=builder /opt/venv /opt/venv
-COPY --chown=app:app app.py ./app.py
-COPY --chown=app:app logo.png image_bea22f.jpg ./
-
-USER app
+WORKDIR /app
+# The REAL layout (there is no static/ directory yet). scripts/healthcheck.py (T8) is what the HEALTHCHECK below runs.
+COPY --chown=10001:10001 app.py logo.png image_bea22f.jpg ./
+COPY --chown=10001:10001 baror/ ./baror/
+COPY --chown=10001:10001 scripts/ ./scripts/
+COPY --chown=10001:10001 .streamlit/ ./.streamlit/
+USER 10001:10001
+VOLUME ["/data"]
 EXPOSE 8501
-
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=3)" || exit 1
-
-CMD ["streamlit", "run", "app.py", "--server.address=0.0.0.0", "--server.port=8501", "--server.headless=true"]
+HEALTHCHECK --interval=30s --timeout=8s --start-period=30s --retries=3 \
+  CMD ["python", "/app/scripts/healthcheck.py"]
+# init_db.py first: the database exists (schema current) before the first health check, and an unusable /data stops the
+# container with one readable line. `exec` makes Streamlit PID 1's replacement so it receives the stop signal.
+# umask 077: the database, its -wal/-shm files and anything else the app creates are readable by uid 10001 only (they hold
+# password hashes and personal data); SQLite would otherwise create them 0644.
+CMD ["sh", "-c", "umask 077 && python scripts/init_db.py && exec streamlit run app.py"]
