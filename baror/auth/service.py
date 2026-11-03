@@ -22,7 +22,7 @@ import threading
 from collections import OrderedDict
 
 from baror.auth import passwords
-from baror.errors import AuthError, RateLimitedError
+from baror.errors import AuthError, RateLimitedError, ValidationError
 from baror.storage import db, repo
 
 FREE_FAILURES = 4          # first 4 wrong passwords cost nothing extra
@@ -135,6 +135,25 @@ def login(db_path, email, password, now: dt.datetime | None = None) -> dict:
                                must_change_pw=bool(rec["must_change_pw"]), revoke_sessions=False)
     user = repo.get_user(db_path, rec["id"])
     return user
+
+
+def change_password(db_path, user_id, current_password, new_password, now: dt.datetime | None = None) -> None:
+    """Replace the password of a signed-in user and revoke ALL their sessions (the caller issues a new one).
+
+    The current password is verified through ``login`` -- same generic error, same per-account backoff -- so a stolen
+    session cookie cannot be used to guess the password here without limit. The new password follows the policy
+    (8..128 characters) and must differ from the current one. ``must_change_pw`` is cleared.
+    """
+    passwords.check_policy(new_password)
+    if new_password == current_password:
+        raise ValidationError("PASSWORD_UNCHANGED", field="password", detail="new password equals the current one")
+    user = repo.get_user(db_path, user_id) if isinstance(user_id, int) and not isinstance(user_id, bool) else None
+    if user is None or not user["active"]:
+        passwords.verify_against_dummy(current_password)
+        raise AuthError()
+    login(db_path, user["email"], current_password, now)
+    repo.set_password_hash(db_path, user["id"], passwords.hash_password(new_password), must_change_pw=False,
+                           revoke_sessions=True)
 
 
 def register(db_path, *, email, name, gender, is_km, password, now: dt.datetime | None = None) -> dict:

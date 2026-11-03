@@ -222,5 +222,54 @@ class Sessions(DbCase):
         self.assertEqual(sessions.purge_expired(self.path, at(days=2)), 2)
 
 
+class ChangePassword(DbCase):
+    def setUp(self):
+        super().setUp()
+        self.uid = self.user("dana@example.com", pw_hash=passwords.hash_password("old-password-1"))
+        repo.set_password_hash(self.path, self.uid, passwords.hash_password("old-password-1"), must_change_pw=True,
+                               revoke_sessions=False)
+
+    def test_success_clears_the_flag_revokes_every_session_and_swaps_the_password(self):
+        t1, t2 = sessions.issue(self.path, self.uid), sessions.issue(self.path, self.uid)
+        service.change_password(self.path, self.uid, "old-password-1", "new-password-2", at())
+        self.assertFalse(repo.get_user(self.path, self.uid)["must_change_pw"])
+        self.assertIsNone(sessions.resolve(self.path, t1)); self.assertIsNone(sessions.resolve(self.path, t2))
+        self.assertEqual(service.login(self.path, "dana@example.com", "new-password-2", at())["id"], self.uid)
+        with self.assertRaises(AuthError):
+            service.login(self.path, "dana@example.com", "old-password-1", at())
+
+    def test_wrong_current_password_is_the_generic_error_and_counts_towards_the_backoff(self):
+        for i in range(5):
+            with self.assertRaises(AuthError):
+                service.change_password(self.path, self.uid, "nope", "new-password-2", at(i))
+        with self.assertRaises(RateLimitedError):
+            service.change_password(self.path, self.uid, "old-password-1", "new-password-2", at(5))
+        self.assertTrue(repo.get_user(self.path, self.uid)["must_change_pw"], "nothing changed")
+
+    def test_policy_and_sameness_are_checked_without_touching_the_counter(self):
+        from baror.errors import ValidationError
+        for new in ("short", "", "x" * 129, None):
+            with self.assertRaises(ValidationError):
+                service.change_password(self.path, self.uid, "old-password-1", new, at())
+        with self.assertRaises(ValidationError) as cm:
+            service.change_password(self.path, self.uid, "old-password-1", "old-password-1", at())
+        self.assertEqual(cm.exception.message_key, "PASSWORD_UNCHANGED")
+        self.assertEqual(repo.get_login_record(self.path, "dana@example.com")["failed_logins"], 0)
+
+    def test_unknown_deactivated_and_malformed_users_get_the_generic_error(self):
+        from baror.storage import ops
+        ops.deactivate_user(self.path, self.uid)
+        for who in (self.uid, 9999, None, True, "1"):
+            with self.assertRaises(AuthError):
+                service.change_password(self.path, who, "old-password-1", "new-password-2", at())
+        self.assertEqual(repo.get_login_record(self.path, "dana@example.com")["pw_hash"] is not None, True)
+
+    def test_other_users_sessions_are_untouched(self):
+        other = self.user("omer@example.com", pw_hash=passwords.hash_password("omer-password"))
+        tok = sessions.issue(self.path, other)
+        service.change_password(self.path, self.uid, "old-password-1", "new-password-2", at())
+        self.assertEqual(sessions.resolve(self.path, tok)["id"], other)
+
+
 if __name__ == "__main__":
     unittest.main()

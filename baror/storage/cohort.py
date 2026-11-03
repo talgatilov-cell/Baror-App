@@ -24,7 +24,7 @@ from typing import Any
 from baror.errors import AuthError, NotFoundError
 from baror.storage import audit, db
 
-__all__ = ["list_platoon_members", "cohort_summary", "get_cadet_results"]
+__all__ = ["my_platoons", "list_platoon_members", "cohort_summary", "get_cadet_results"]
 
 _STAFF = "('instructor','admin')"
 # True when :actor may read platoon :platoon. Used as a pre-check AND embedded in every data query.
@@ -72,6 +72,16 @@ def _members(c, actor, platoon):
     return c.execute(
         f"SELECT u.id,u.name,u.gender,u.is_km FROM users u WHERE u.platoon_id=:platoon AND u.role='cadet' "
         f"AND u.active=1 AND {_GRANTED} ORDER BY u.name, u.id", {"actor": actor, "platoon": platoon}).fetchall()
+
+
+def my_platoons(db_path, actor_id) -> list[dict[str, Any]]:
+    """The platoons this actor may read: [{id, name}] by name. Own grants only, so no cadet data and no audit row on
+    success; a refused call by an existing account is audited as 'denied' like every other cohort call."""
+    def body(c, actor, _platoon, _cadet):
+        return [dict(r) for r in c.execute(
+            "SELECT p.id, p.name FROM instructor_platoons ip JOIN platoons p ON p.id=ip.platoon_id "
+            "WHERE ip.instructor_id=? ORDER BY p.name, p.id", (actor,))]
+    return _run(db_path, actor_id, "cohort.platoons", None, None, None, body)
 
 
 def list_platoon_members(db_path, actor_id, platoon_id, *, now: dt.datetime | None = None) -> list[dict[str, Any]]:

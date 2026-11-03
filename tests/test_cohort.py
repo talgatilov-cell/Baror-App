@@ -210,11 +210,11 @@ class CohortAudit(CohortBase):
 
 
 class CohortReadOnly(CohortBase):
-    def test_module_public_functions_are_the_three_reads(self):
+    def test_module_public_functions_are_the_four_reads(self):
         pub = [n for n, f in inspect.getmembers(cohort, inspect.isfunction)
                if not n.startswith("_") and f.__module__ == cohort.__name__]
         self.assertEqual(sorted(pub), sorted(cohort.__all__))
-        self.assertEqual(sorted(pub), ["cohort_summary", "get_cadet_results", "list_platoon_members"])
+        self.assertEqual(sorted(pub), ["cohort_summary", "get_cadet_results", "list_platoon_members", "my_platoons"])
 
     def test_source_has_no_write_statements_except_audit_insert(self):
         src = inspect.getsource(cohort)
@@ -242,6 +242,28 @@ class CohortReadOnly(CohortBase):
                   lambda: admin.grant_platoon(self.path, self.ins, self.ins, self.pb)):
             with self.assertRaises(AuthError):
                 f()
+
+
+class MyPlatoons(CohortBase):
+    def test_lists_exactly_the_granted_platoons_by_name_and_writes_no_audit_row(self):
+        ops.grant_platoon(self.path, self.ins, self.pb)
+        n = self.n_audit()
+        self.assertEqual(cohort.my_platoons(self.path, self.ins), [{"id": self.pa, "name": "A"}, {"id": self.pb, "name": "B"}])
+        self.assertEqual(self.n_audit(), n)
+
+    def test_instructor_without_grants_gets_an_empty_list(self):
+        self.assertEqual(cohort.my_platoons(self.path, self.staff("none@x.com")), [])
+
+    def test_admin_sees_only_explicit_grants(self):
+        self.assertEqual(cohort.my_platoons(self.path, self.adm), [])
+        ops.grant_platoon(self.path, self.adm, self.pa)
+        self.assertEqual(cohort.my_platoons(self.path, self.adm), [{"id": self.pa, "name": "A"}])
+
+    def test_cadets_deactivated_staff_and_strangers_are_refused(self):
+        ops.deactivate_user(self.path, self.ins)
+        for actor in (self.ca, self.ins, 999, None, True, "1"):
+            with self.assertRaises(AuthError, msg=repr(actor)):
+                cohort.my_platoons(self.path, actor)
 
 
 if __name__ == "__main__":
