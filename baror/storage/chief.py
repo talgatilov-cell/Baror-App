@@ -10,12 +10,15 @@ Same discipline as ``baror.storage.cohort``:
   account writes a 'denied' audit row; unknown actors write nothing (strangers cannot fill the log).
 * No write statement except INSERTs into ``audit_log`` (tests/test_chief.py scans this source).
 
-Three reads:
+Reads (the last two serve the stored period reports of ``baror.storage.reports``):
 * ``overview``              aggregates per platoon and in total. NO names, ids or raw values. A group with fewer than
                             ``MIN_GROUP`` contributing cadets is returned as ``suppressed`` without any figure, and the
                             totals add up SHOWN groups only (otherwise ``total - shown`` would reveal a hidden group).
 * ``list_platoon_members``  names of the active cadets of one platoon (or of the unassigned), to choose whom to open.
 * ``get_cadet_results``     name and results of ONE cadet in any platoon: the audited drill-down (``chief.cadet``).
+
+* ``list_reports``          metadata of the stored aggregated reports (weekly / monthly), newest first. One audit row.
+* ``get_report``            one stored report with its PDF bytes (aggregated, no names). One audit row per call.
 
 Grading is injected (``grade(metric, gender, test_date, value) -> 'excellent'|'pass'|'fail'|None``), so this layer does
 not import the domain package; see ``baror.domain.grading.grade_stored_value``.
@@ -29,7 +32,8 @@ from baror.errors import AuthError, NotFoundError
 from baror.storage import accommodations, audit, db
 from baror.storage.summaries import fold_summary
 
-__all__ = ["MIN_GROUP", "overview", "list_platoon_members", "platoon_summary", "get_cadet_results"]
+__all__ = ["MIN_GROUP", "overview", "list_platoon_members", "platoon_summary", "get_cadet_results", "list_reports",
+           "get_report", "report_mail_state"]
 
 MIN_GROUP = 5   # suggested minimum from the research, not a legal standard (ADR-0001)
 _LEVELS = ("excellent", "pass", "fail")
@@ -213,3 +217,52 @@ def get_cadet_results(db_path, actor_id, cadet_id, *, now: dt.datetime | None = 
                 "results": [dict(r) for r in res],
                 "accommodations": accommodations.fetch_public(c, [t["id"]])[t["id"]]}
     return _run(db_path, actor_id, "chief.cadet", None, cadet_id, now, body)
+
+
+# ------------------------------------------------------------------ stored period reports
+def list_reports(db_path, actor_id, period_type: str | None = None, *, now: dt.datetime | None = None) -> list[dict[str, Any]]:
+    """[{id, period_type ('weekly'|'monthly'), period_start, period_end, generated_at, size}] newest period first, for
+    one type or (``period_type=None``) both. No PDF bytes. Audited as one ``chief.reports`` row; an unknown type is a
+    ValueError (after the authorisation check, so a refusal never depends on the input)."""
+    def body(c, actor, _platoon, _cadet):
+        if period_type not in (None, "weekly", "monthly"):
+            raise ValueError("unknown report type")
+        where, args = ("WHERE period_type=?", (period_type,)) if period_type else ("", ())
+        rows = c.execute("SELECT id, period_type, period_start, period_end, generated_at, length(pdf) AS size FROM reports "
+                         + where + " ORDER BY period_end DESC, id DESC", args).fetchall()   # `where` is one of two literals
+        audit.record(c, actor_id=actor, action="chief.reports", now=now)
+        return [dict(r) for r in rows] or [None]
+    out = _run(db_path, actor_id, "chief.reports", None, None, now, body)
+    return [] if out == [None] else out
+
+
+def get_report(db_path, actor_id, report_id, *, now: dt.datetime | None = None) -> dict[str, Any]:
+    """One stored report: {id, period_type, period_start, period_end, generated_at, pdf (bytes)}. Unknown id ->
+    NotFoundError. Audited as one ``chief.report`` row per call (the UI calls it once per download, not per rerun)."""
+    def body(c, actor, _platoon, _cadet):
+        rid = _id(report_id)
+        row = c.execute("SELECT id, period_type, period_start, period_end, generated_at, pdf FROM reports WHERE id=?",
+                        (rid,)).fetchone() if rid else None
+        if row is None:
+            return None
+        audit.record(c, actor_id=actor, action="chief.report", now=now)
+        return {**{k: row[k] for k in ("id", "period_type", "period_start", "period_end", "generated_at")},
+                "pdf": bytes(row["pdf"])}
+    return _run(db_path, actor_id, "chief.report", None, None, now, body)
+
+
+def report_mail_state(db_path, actor_id, *, now: dt.datetime | None = None) -> dict[str, Any]:
+    """{'enabled': bool, 'changed_at': ISO timestamp or None}: the automatic-mail switch. CHIEF ONLY (AuthError otherwise,
+    a refusal by an existing account leaves a 'denied' row). NOT audited on success: it is a configuration flag with no
+    data about anybody, and the screen reads it on every run, which would flood the log. Changing it is audited
+    (``baror.storage.reports.set_mail_enabled``)."""
+    actor = _id(actor_id)
+    with db.transaction(db_path) as c:                    # check and read in ONE transaction, like the other reads
+        denied = _denial(c, actor)
+        if denied is None:
+            r = c.execute("SELECT mail_enabled, changed_at FROM report_settings WHERE id=1").fetchone()
+        elif actor is not None and c.execute("SELECT 1 FROM users WHERE id=?", (actor,)).fetchone():
+            audit.record(c, actor_id=actor, action="chief.mail_state", outcome="denied", now=now)
+    if denied is not None:
+        raise denied
+    return {"enabled": bool(r and r["mail_enabled"]), "changed_at": r["changed_at"] if r else None}

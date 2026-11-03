@@ -216,7 +216,27 @@ button[data-variant="segmented_control"]{flex:1 1 0; min-width:0; min-height:var
 
 /* ---- round 2 ------------------------------------------------------------------------------------------------- */
 /* top bar on every signed-in page: app name on the start side, sign-out on the end side */
-.st-key-top_bar{background:var(--bg); border-radius:var(--radius); padding:.5rem; margin-block-end:.5rem}   /* opaque sand */
+/* Pinned like the bottom bar: the page (stMain) scrolls under it and it never moves. Same centring (46 rem), opaque sand,
+   a hairline on the edge facing the content, and the top safe-area inset (notch / status bar) added to its padding.
+   z-index 999 is below Streamlit's dialogs and its (empty) header. The card below gets matching top padding. */
+.st-key-top_bar{
+  position:fixed; inset-block-start:0; inset-inline:0; z-index:999;
+  box-sizing:border-box; width:100%; max-width:46rem; margin:0; margin-inline:auto;
+  background:var(--bg); border-block-end:1px solid var(--line);
+  padding:calc(.5rem + env(safe-area-inset-top)) 1rem .5rem}
+/* Streamlit's own header (empty with toolbarMode "minimal") sits above the bar at z-index 999990 and 60 px tall: let taps
+   through to the sign-out button. Anything it might hold (a developer toolbar) stays clickable. */
+[data-testid="stHeader"]{pointer-events:none}
+[data-testid="stHeader"] > *{pointer-events:auto}
+/* keyboard focus / scroll-into-view stops clear of both pinned bars (WCAG 2.4.11 focus not obscured): top bar 65 px,
+   bottom bar 73 px, each plus its safe-area inset */
+.stApp:has(.st-key-top_bar) [data-testid="stMain"]{
+  scroll-padding-block:calc(var(--tap) + 1.5rem + env(safe-area-inset-top)) calc(var(--tap) + 2.5rem + env(safe-area-inset-bottom))}
+/* room for the pinned bar (padding .5rem x 2 + the 48 px button + 1 px edge = 65 px, plus the notch inset). The card
+   starts 12 px down and Streamlit adds ~48 px of gaps for its zero-height helper elements, so 1 rem here leaves the first
+   heading about 60 px under the bar, and never under it even if those helpers were absent. */
+.stApp:has(.st-key-top_bar) [data-testid="stMainBlockContainer"]{
+  padding-block-start:calc(var(--tap) + 1rem + env(safe-area-inset-top))}
 .brandbar{display:flex; align-items:center; gap:.5rem; font-weight:800; font-size:1.125rem; color:var(--ink)}
 .st-key-top_bar .stButton button{min-height:var(--tap)}
 /* tables (st.table): Streamlit left-aligns the body cells; in RTL every cell starts on the right and the first column

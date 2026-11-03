@@ -22,7 +22,7 @@ class V5ToV6(unittest.TestCase):
 
     def test_upgrade_adds_the_table_and_keeps_every_row(self):
         self.assertEqual(db.user_version(self.path), 5)
-        self.assertEqual(db.init_db(self.path), 6)
+        self.assertEqual(db.init_db(self.path, target_version=6), 6)
         self.assertEqual(person_view(self.path), self.before)
         with db.reader(self.path) as c:
             self.assertEqual(c.execute("SELECT count(*) FROM accommodations").fetchone()[0], 0)
@@ -41,7 +41,7 @@ class V5ToV6(unittest.TestCase):
 
     def test_idempotent_and_a_fresh_database_has_the_same_shape(self):
         db.init_db(self.path)
-        self.assertEqual(db.init_db(self.path), 6)
+        self.assertEqual(db.init_db(self.path), db.LATEST_VERSION)
         fresh = os.path.join(self._tmp.name, "fresh.db")
         db.init_db(fresh)
 

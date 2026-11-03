@@ -210,11 +210,12 @@ class CohortAudit(CohortBase):
 
 
 class CohortReadOnly(CohortBase):
-    def test_module_public_functions_are_the_four_reads(self):
+    def test_module_public_functions_are_the_five_reads(self):
         pub = [n for n, f in inspect.getmembers(cohort, inspect.isfunction)
                if not n.startswith("_") and f.__module__ == cohort.__name__]
         self.assertEqual(sorted(pub), sorted(cohort.__all__))
-        self.assertEqual(sorted(pub), ["cohort_summary", "get_cadet_results", "list_platoon_members", "my_platoons"])
+        self.assertEqual(sorted(pub), ["cadet_history", "cohort_summary", "get_cadet_results", "list_platoon_members",
+                                       "my_platoons"])
 
     def test_source_has_no_write_statements_except_audit_insert(self):
         src = inspect.getsource(cohort)
@@ -242,6 +243,194 @@ class CohortReadOnly(CohortBase):
                   lambda: admin.grant_platoon(self.path, self.ins, self.ins, self.pb)):
             with self.assertRaises(AuthError):
                 f()
+
+
+class CadetHistory(CohortBase):
+    """cohort.cadet_history: full history + best values of ONE cadet, same authorisation as the other cohort reads."""
+
+    def test_shape_matches_the_chiefs_cadet_read_and_adds_best(self):
+        from baror.storage import chief
+        h = cohort.cadet_history(self.path, self.ins, self.ca)
+        self.assertEqual(set(h), {"cadet", "results", "best", "accommodations"})
+        self.assertEqual(set(h["cadet"]), {"id", "name", "gender", "is_km"})
+        self.assertEqual(h["results"], [{"test_date": "2026-02-01", "run_tenths": 950, "pushups": 40},
+                                        {"test_date": "2026-01-01", "run_tenths": 900, "pushups": 30}])
+        self.assertEqual(h["best"], {"run_tenths": 900, "pushups": 40})
+        # same result rows as the chief's drill-down, so the same chart code accepts them
+        c = chief.get_cadet_results(self.path, self.staff("chief@x.com", role="chief"), self.ca)
+        self.assertEqual(h["results"], c["results"])
+        self.assertEqual(h["accommodations"], c["accommodations"])
+        self.assertEqual(cohort.get_cadet_results(self.path, self.ins, self.ca)["results"], h["results"])
+
+    def test_chart_code_accepts_the_results(self):
+        from baror.ui import charts
+        h = cohort.cadet_history(self.path, self.ins, self.ca)
+        self.assertEqual([p.value for p in charts.points(h["results"], charts.AERO)], [900, 950])
+        self.assertEqual([p.value for p in charts.points(h["results"], charts.PUSHUPS)], [30, 40])
+
+    def test_best_with_ties_none_values_and_walk_only_cadets(self):
+        tie = self.cadet("tie@x.com", self.pa, name="Tie")
+        for d, r, p in (("2026-01-01", 800, 20), ("2026-01-02", 800, 20), ("2026-01-03", None, 35),
+                        ("2026-01-04", 870, None), ("2026-01-05", 790, 35)):
+            repo.add_result(self.path, tie, test_date=d, run_tenths=r, pushups=p)
+        h = cohort.cadet_history(self.path, self.ins, tie)
+        self.assertEqual(h["best"], {"run_tenths": 790, "pushups": 35})
+        self.assertEqual(len(h["results"]), 5)
+        self.assertEqual(h["results"][0]["test_date"], "2026-01-05")
+        # an older, better value beats a newer worse one; None never wins
+        old = self.cadet("old@x.com", self.pa, name="Old")
+        repo.add_result(self.path, old, test_date="2026-01-01", run_tenths=700, pushups=60)
+        repo.add_result(self.path, old, test_date="2026-03-01", run_tenths=None, pushups=10)
+        self.assertEqual(cohort.cadet_history(self.path, self.ins, old)["best"], {"run_tenths": 700, "pushups": 60})
+        # only one metric recorded: the other best is None; 0 push-ups is a real value, not "missing"
+        po = self.cadet("po@x.com", self.pa, name="Po")
+        repo.add_result(self.path, po, test_date="2026-01-01", pushups=0)
+        self.assertEqual(cohort.cadet_history(self.path, self.ins, po)["best"], {"run_tenths": None, "pushups": 0})
+        ro = self.cadet("ro@x.com", self.pa, name="Ro")
+        repo.add_result(self.path, ro, test_date="2026-01-01", run_tenths=1000)
+        self.assertEqual(cohort.cadet_history(self.path, self.ins, ro)["best"], {"run_tenths": 1000, "pushups": None})
+
+    def test_cadet_with_no_results_has_empty_history_and_none_best(self):
+        e = self.cadet("e@x.com", self.pa, name="Empty")
+        h = cohort.cadet_history(self.path, self.ins, e)
+        self.assertEqual((h["results"], h["best"]), ([], {"run_tenths": None, "pushups": None}))
+        self.assertEqual(h["cadet"]["id"], e)
+
+    def test_includes_gender_is_km_and_accommodations_list(self):
+        h = cohort.cadet_history(self.path, self.ins, self.ca)
+        self.assertIn("gender", h["cadet"])
+        self.assertIn("is_km", h["cadet"])
+        self.assertIsInstance(h["accommodations"], list)
+
+    def test_not_granted_other_platoon_and_admin_without_grant_look_identical(self):
+        i2 = self.staff("i2@x.com")                        # instructor with no grants
+        seen = set()
+        for actor, target in ((self.ins, self.cb),         # other platoon
+                              (i2, self.ca),               # not granted
+                              (self.adm, self.ca),         # admin has no implicit access
+                              (self.ins, 9999)):           # does not exist
+            with self.assertRaises(NotFoundError) as cm:
+                cohort.cadet_history(self.path, actor, target)
+            seen.add((type(cm.exception), cm.exception.message_key, str(cm.exception.args)))
+        self.assertEqual(len(seen), 1)
+
+    def test_admin_with_grant_reads_only_the_granted_platoon(self):
+        ops.grant_platoon(self.path, self.adm, self.pa)
+        self.assertEqual(cohort.cadet_history(self.path, self.adm, self.ca)["cadet"]["id"], self.ca)
+        with self.assertRaises(NotFoundError):
+            cohort.cadet_history(self.path, self.adm, self.cb)
+
+    def test_cadet_and_bad_actors_are_refused_and_bad_or_staff_targets_not_found(self):
+        for actor in (self.ca, self.cb, None, 0, -1, 9999, "1", True, 1.0, 2**70):
+            with self.subTest(actor=actor), self.assertRaises(AuthError):
+                cohort.cadet_history(self.path, actor, self.ca)
+        for bad in (None, 0, -1, "1", True, 2**70, self.adm, self.ins):
+            with self.subTest(target=bad), self.assertRaises(NotFoundError):
+                cohort.cadet_history(self.path, self.ins, bad)
+
+    def test_deactivated_and_deleted_cadet_and_deactivated_actor(self):
+        ops.deactivate_user(self.path, self.ca)
+        with self.assertRaises(NotFoundError):
+            cohort.cadet_history(self.path, self.ins, self.ca)
+        ops.reactivate_user(self.path, self.ca)
+        self.assertTrue(cohort.cadet_history(self.path, self.ins, self.ca)["results"])
+        repo.delete_user(self.path, self.ca)
+        with self.assertRaises(NotFoundError):
+            cohort.cadet_history(self.path, self.ins, self.ca)
+        ops.deactivate_user(self.path, self.ins)
+        with self.assertRaises(AuthError):
+            cohort.cadet_history(self.path, self.ins, self.cb)
+
+    def test_moved_cadet_and_revoked_grant_lose_access_immediately(self):
+        cohort.cadet_history(self.path, self.ins, self.ca)
+        ops.set_user_platoon(self.path, self.ca, self.pb)
+        with self.assertRaises(NotFoundError):
+            cohort.cadet_history(self.path, self.ins, self.ca)
+        ops.set_user_platoon(self.path, self.ca, self.pa)
+        ops.revoke_platoon(self.path, self.ins, self.pa)
+        with self.assertRaises(NotFoundError):
+            cohort.cadet_history(self.path, self.ins, self.ca)
+
+    def test_cadet_without_platoon_unreadable(self):
+        with self.assertRaises(NotFoundError):
+            cohort.cadet_history(self.path, self.ins, self.cadet("np@x.com"))
+
+    def test_no_data_of_another_cadet_leaks_in(self):
+        h = cohort.cadet_history(self.path, self.ins, self.ca)
+        self.assertNotIn(800, [r["run_tenths"] for r in h["results"]])   # cb's run
+        self.assertNotEqual(h["best"]["pushups"], 50)
+
+    def test_ok_audit_row_counts_as_a_disclosed_read_and_holds_no_values(self):
+        cohort.cadet_history(self.path, self.ins, self.ca, now=NOW)
+        self.assertEqual(self.audit_rows(action="cohort.cadet"), [(self.ins, "cohort.cadet", self.ca, self.pa, "ok")])
+        with db.reader(self.path) as c:
+            self.assertEqual(audit.reads_of_user(c, self.ca, now=NOW), [{"date": "2026-11-02", "reader": "I", "reads": 1}])
+            blob = repr([tuple(r) for r in c.execute("SELECT * FROM audit_log")])
+        for secret in ("ca@x.com", "Alef", "900"):
+            self.assertNotIn(secret, blob)
+
+    def test_denied_audit_rows_only_for_existing_actors(self):
+        with self.assertRaises(NotFoundError):
+            cohort.cadet_history(self.path, self.ins, self.cb)
+        with self.assertRaises(AuthError):
+            cohort.cadet_history(self.path, self.ca, self.ca)
+        with self.assertRaises(AuthError):
+            cohort.cadet_history(self.path, 9999, self.ca)
+        self.assertEqual(self.audit_rows(outcome="denied"), [(self.ins, "cohort.cadet", self.cb, None, "denied"),
+                                                             (self.ca, "cohort.cadet", self.ca, None, "denied")])
+        self.assertEqual(self.audit_rows(actor_id=9999), [])
+
+    def test_audit_row_is_in_the_same_transaction(self):
+        orig = audit.record
+        before = self.audit_rows()
+
+        def boom(*a, **k):
+            raise RuntimeError("audit failed")
+        audit.record = boom
+        try:
+            with self.assertRaises(RuntimeError):
+                cohort.cadet_history(self.path, self.ins, self.ca)
+        finally:
+            audit.record = orig
+        self.assertEqual(self.audit_rows(), before)
+
+    def test_does_not_write_user_or_result_data(self):
+        def snap():
+            with db.reader(self.path) as c:
+                return [tuple(r) for t in ("users", "results", "instructor_platoons", "platoons")
+                        for r in c.execute(f"SELECT * FROM {t}")]
+        before = snap()
+        cohort.cadet_history(self.path, self.ins, self.ca)
+        self.assertEqual(snap(), before)
+
+
+class SummaryBest(CohortBase):
+    def test_each_summary_entry_has_best_and_results_count_and_old_keys_remain(self):
+        s = cohort.cohort_summary(self.path, self.ins, self.pa)[0]
+        self.assertEqual(s["best"], {"run_tenths": 900, "pushups": 40})
+        self.assertEqual(s["results_count"], 2)
+        for k in ("id", "name", "gender", "is_km", "result_count", "last_test_date", "latest_run", "latest_pushups",
+                  "best_run_tenths", "best_pushups", "accommodations"):
+            self.assertIn(k, s)
+        self.assertEqual((s["best_run_tenths"], s["best_pushups"], s["result_count"]), (900, 40, 2))
+
+    def test_best_for_empty_and_walk_only_cadets(self):
+        e = self.cadet("e@x.com", self.pa, name="Empty")
+        w = self.cadet("w@x.com", self.pa, name="Walk")
+        repo.add_result(self.path, w, test_date="2026-01-01", pushups=12)
+        by = {x["id"]: x for x in cohort.cohort_summary(self.path, self.ins, self.pa)}
+        self.assertEqual((by[e]["best"], by[e]["results_count"]), ({"run_tenths": None, "pushups": None}, 0))
+        self.assertEqual((by[w]["best"], by[w]["results_count"]), ({"run_tenths": None, "pushups": 12}, 1))
+
+    def test_best_agrees_with_cadet_history_for_every_cadet(self):
+        ops.grant_platoon(self.path, self.adm, self.pa)
+        x = self.cadet("x@x.com", self.pa, name="X")
+        for d, r, p in (("2026-01-01", 860, 25), ("2026-02-01", 840, None), ("2026-03-01", None, 31)):
+            repo.add_result(self.path, x, test_date=d, run_tenths=r, pushups=p)
+        for s in cohort.cohort_summary(self.path, self.adm, self.pa):
+            h = cohort.cadet_history(self.path, self.adm, s["id"])
+            self.assertEqual(s["best"], h["best"])
+            self.assertEqual(s["results_count"], len(h["results"]))
 
 
 class MyPlatoons(CohortBase):

@@ -192,7 +192,8 @@ class OwnRead(Base):
         before = self.n_audit()
         got = acc.list_own(self.path, self.ca)
         self.assertEqual([r["id"] for r in got], [second, first])
-        self.assertEqual(set(got[0]), {"id", "kind", "scope", "start_date", "end_date", "note", "source", "created_at", "delete_requested"})
+        self.assertEqual(set(got[0]), {"id", "kind", "scope", "start_date", "end_date", "note", "source", "approval", "created_at",
+                                       "delete_requested"})
         self.assertEqual((got[0]["source"], got[1]["source"]), ("instructor", "cadet"))
         self.assertFalse(any(r["id"] in (x["id"] for x in acc.list_own(self.path, self.cb)) for r in got))
         self.assertEqual(self.n_audit(), before)
@@ -201,10 +202,11 @@ class OwnRead(Base):
 
     def test_there_is_no_update_function_and_no_cadet_path_to_delete(self):
         names = [n for n, f in inspect.getmembers(acc, inspect.isfunction) if f.__module__ == acc.__name__ and not n.startswith("_")]
-        self.assertEqual(sorted(names), ["add", "approve_delete", "fetch_public", "list_own", "pending_deletions", "reject_delete",
-                                         "request_delete"])
+        self.assertEqual(sorted(names), ["add", "approve_delete", "approve_request", "fetch_public", "list_own", "pending_deletions",
+                                         "pending_requests", "reject_delete", "reject_request", "request_delete"])
         src = inspect.getsource(acc)
-        self.assertEqual(re.findall(r"\bUPDATE\s+(\w+)", src), ["accommodations", "accommodations"], "only the request flags change")
+        self.assertEqual(re.findall(r"\bUPDATE\s+(\w+)", src), ["accommodations"] * 3,
+                         "only the request flags and the approval decision change")
         self.assertNotRegex(src, r"UPDATE accommodations SET (kind|scope|start_date|end_date|note|source|user_id)")
 
 

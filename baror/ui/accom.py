@@ -18,10 +18,13 @@ from baror.errors import BarorError
 from baror.logging_setup import log_event
 from baror.messages_he import render_exception, t
 from baror.storage import accommodations as store
+from baror.storage import chief as chief_store
 from baror.ui.components import iso
 
 KIND_ICON = {"relief": "tune", "exemption": "do_not_disturb_on"}
-STATUS_BADGE = {"active": ("green", "check_circle"), "upcoming": ("orange", "schedule"), "expired": ("gray", "history")}
+STATUS_BADGE = {"active": ("green", "check_circle"), "upcoming": ("orange", "schedule"), "expired": ("gray", "history"),
+                "pending": ("orange", "hourglass_empty"), "rejected": ("red", "cancel")}
+_APPROVAL_STATES = ("pending", "rejected")         # statuses that come from the approval step: their words are acc_approval_*
 NOTE_MAX = rules.NOTE_MAX
 
 
@@ -41,7 +44,8 @@ def kind_badge(rec: dict) -> str:
 def status_badge(rec: dict, today: dt.date) -> str:
     status = rules.status(rec, today)
     colour, icon = STATUS_BADGE[status]
-    return f":{colour}-badge[:material/{icon}: {t('acc_status_' + status)}]"
+    word = t(("acc_approval_" if status in _APPROVAL_STATES else "acc_status_") + status)
+    return f":{colour}-badge[:material/{icon}: {word}]"
 
 
 def source_badge(rec: dict) -> str:
@@ -55,17 +59,19 @@ def active_count(records: list[dict], today: dt.date) -> int:
     return sum(1 for r in records if rules.status(r, today) == "active")
 
 
-def record_row(rec: dict, today: dt.date, *, key: str) -> None:
-    """One record: kind and scope, dates, status, source, pending request, and the note as plain text."""
+def record_row(rec: dict, today: dt.date, *, key: str, show_status: bool = True) -> None:
+    """One record: kind and scope, dates, status (or approval state), source, pending deletion request, and the note as
+    plain text. ``show_status=False`` leaves the status badge out (a deletion request's list does not carry the approval,
+    so it must not guess one)."""
     with st.container(border=True, key=key):
         st.markdown(f"{kind_badge(rec)} **{t('acc_scope_' + rec['scope'])}**")
-        st.markdown(f"{iso(t('acc_dates', start=dmy(rec['start_date']), end=dmy(rec['end_date'])))} "
-                    f"{status_badge(rec, today)}")
+        dates = iso(t('acc_dates', start=dmy(rec['start_date']), end=dmy(rec['end_date'])))
+        st.markdown(f"{dates} {status_badge(rec, today)}" if show_status else dates)
         if rec.get("note"):
             st.text(rec["note"])                                   # typed by a person: never Markdown or HTML
         badges = source_badge(rec)
         if rec.get("delete_requested"):
-            badges += f" :orange-badge[:material/hourglass_top: {t('acc_pending_chief')}]"
+            badges += f" :orange-badge[:material/delete_sweep: {t('acc_pending_chief')}]"      # deletion, not approval
         st.markdown(badges)
 
 
@@ -110,6 +116,26 @@ def apply_reject(cfg: Config, actor_id: int, rec_id: int) -> str | None:
     return None
 
 
+def apply_approve_request(cfg: Config, actor_id: int, rec_id: int) -> str | None:
+    """Chief: approve a pending accommodation REQUEST (the record comes into effect). Not a deletion."""
+    try:
+        store.approve_request(cfg.db_path, actor_id, rec_id)
+    except BarorError as exc:
+        return render_exception(exc)
+    log_event("accommodation_request_approved", user_id=actor_id)
+    return None
+
+
+def apply_reject_request(cfg: Config, actor_id: int, rec_id: int) -> str | None:
+    """Chief: reject a pending accommodation REQUEST (the row stays, marked rejected). Not a deletion."""
+    try:
+        store.reject_request(cfg.db_path, actor_id, rec_id)
+    except BarorError as exc:
+        return render_exception(exc)
+    log_event("accommodation_request_rejected", user_id=actor_id)
+    return None
+
+
 # ----------------------------------------------------------------------------------------------- the form
 def form_fields(cfg: Config, prefix: str):
     """Kind, scope, dates and note as widgets (native, 48 px). Keys start with ``prefix`` so the same form can sit in
@@ -150,7 +176,21 @@ def add_dialog(cfg: Config, actor: dict, cadet_id: int) -> None:
             st.rerun(scope="fragment")
         st.session_state.pop(f"_accd_error_{cadet_id}", None)
         st.session_state["_notice"] = t("acc_added")
+        _refresh_chief_open(cfg, actor["id"], cadet_id)
         st.rerun()
+
+
+def _refresh_chief_open(cfg: Config, actor_id: int, cadet_id: int) -> None:
+    """The chief's opened-cadet view is a snapshot in session state. After an add it would still be the old one (the
+    record is stored but not on screen, which looks like 'not saved'): re-read it (the same named, audited read as
+    opening), or drop it if that read is refused."""
+    held = st.session_state.get("_chief_open")
+    if not held or held.get("cadet") != cadet_id:
+        return
+    try:
+        held["data"] = chief_store.get_cadet_results(cfg.db_path, actor_id, cadet_id)
+    except BarorError:
+        st.session_state.pop("_chief_open", None)
 
 
 @st.dialog(t("acc_request_title"))
@@ -190,14 +230,46 @@ def approve_dialog(cfg: Config, actor: dict, rec_id: int) -> None:
         st.session_state["_notice"] = t("acc_deleted")
         st.session_state.pop("_chief_open", None)
         st.session_state.pop("_chief_pending", None)
+        st.session_state.pop("_chief_requests", None)         # the deleted record may have been waiting for approval
+        st.rerun()
+
+
+def decide_request(cfg: Config, actor_id: int, rec_id: int, *, approve: bool, on_done=None) -> None:
+    """Approve or reject one accommodation request, leave the confirmation (or the refusal) as the next notice, and drop
+    the pending-request list so the next run re-reads it (one audited read per action, not one per rerun).
+    ``on_done(ok)`` lets the caller fix its own snapshots (it is told whether storage accepted the decision)."""
+    fn, done = (apply_approve_request, "acc_request_approved") if approve else (apply_reject_request, "acc_request_rejected")
+    problem = fn(cfg, actor_id, rec_id)
+    st.session_state.pop("_chief_requests", None)
+    st.session_state["_notice_error" if problem else "_notice"] = problem or t(done)
+    if on_done:
+        on_done(problem is None)
+
+
+@st.dialog(t("acc_reject_request_title"))
+def reject_request_dialog(cfg: Config, actor: dict, rec_id: int, on_done=None) -> None:
+    """The one light confirmation of the request flow: a rejection cannot be undone (the decision is final and the
+    cadet would have to send a new request), while an approval can still be removed by the chief."""
+    st.write(t("acc_reject_request_body"))
+    c1, c2 = st.columns(2, wrap=False)
+    with c1:
+        go = st.button(t("btn_reject_request"), type="primary", width="stretch", key=f"rej_ok_{rec_id}")
+    with c2:
+        if st.button(t("btn_cancel"), width="stretch", key=f"rej_cancel_{rec_id}"):
+            st.rerun()
+    if go:
+        decide_request(cfg, actor["id"], rec_id, approve=False, on_done=on_done)
         st.rerun()
 
 
 def take_notice() -> None:
-    """Show (once) the confirmation a dialog left behind."""
+    """Show (once) the confirmation, or the refusal, a dialog or button left behind."""
     note = st.session_state.pop("_notice", None)
     if note:
         st.success(note, icon=":material/check_circle:")
+    problem = st.session_state.pop("_notice_error", None)
+    if problem:
+        st.error(problem, icon=":material/error:")
 
 
 # ---------------------------------------------------------------------------------------- the cadet's own tab
@@ -207,7 +279,7 @@ def _on_save(cfg: Config, user: dict) -> None:
                         start=s.get("acc_start"), end=s.get("acc_end"), note=s.get("acc_note"))
     s["_acc_error"] = problem
     if problem is None:
-        s["_notice"] = t("acc_added")
+        s["_notice"] = t("acc_sent_for_approval")             # a cadet's own record waits for the chief
         s["_acc_reset"] = True
 
 

@@ -258,8 +258,62 @@ CREATE INDEX idx_accommodations_user ON accommodations(user_id);
 CREATE INDEX idx_accommodations_pending ON accommodations(delete_requested_at) WHERE delete_requested_at IS NOT NULL
 """
 
+# Schema v7: the approval step of accommodations (owner request of 2026-11-03). A record entered by a cadet starts
+# 'pending' and counts only once the chief has 'approved' it; 'rejected' keeps the row (cadet and staff still see it,
+# labelled) but it is never in effect. Records of instructors, admins and the chief are 'approved' from the start.
+# Three columns are ADDED (nothing is rebuilt; ``DEFAULT 'approved'`` keeps an operator insert that names no approval
+# approved). Existing rows: source 'cadet' -> 'pending', all others stay 'approved'. The CHECKs on the two decision
+# columns keep the trio consistent (a pending row has no decision; a decider always has a time).
+SCHEMA_V7 = """
+ALTER TABLE accommodations ADD COLUMN approval TEXT NOT NULL DEFAULT 'approved' CHECK(approval IN ('pending','approved','rejected'));
+ALTER TABLE accommodations ADD COLUMN decided_at TEXT CHECK(decided_at IS NULL OR approval<>'pending');
+ALTER TABLE accommodations ADD COLUMN decided_by INTEGER REFERENCES users(id) ON DELETE SET NULL CHECK(decided_by IS NULL OR decided_at IS NOT NULL);
+UPDATE accommodations SET approval='pending' WHERE source='cadet';
+CREATE INDEX idx_accommodations_approval ON accommodations(created_at) WHERE approval='pending'
+"""
+
+# Schema v8: the stored aggregated reports (owner request of 2026-11-03: weekly report every Thursday, monthly report at
+# the end of the month; see baror.domain.reports) and their e-mail delivery bookkeeping. Two new tables, nothing is
+# rebuilt. ``reports.pdf`` holds the finished PDF: aggregated figures only, NO names, groups under 5 hidden, so it is
+# not personal data and it stays when cadets are de-identified; it is part of the ordinary database backup, which is why
+# it lives here and not in a file (no new volume). At most one report per type and period start (a second generation is
+# a no-op). ``report_deliveries`` has one row per report and RECIPIENT ACCOUNT (never an address: it is read from
+# ``users`` when sending and the row follows the account if it is deleted): sent_at when the mail went out, ``last_error``
+# a short code (lower-case letters, digits and underscore, never exception text) after a failed attempt.
+# ``report_settings`` is ONE row: the switch for automatic e-mailing, OFF by default (mail_enabled=0 after the migration);
+# the chief flips it on the screen, which records who and when (changed_at is also the cut-off: only reports generated
+# at or after the moment it was switched ON are mailed, never the older backlog). scripts/backup.py --restore switches it
+# off again.
+SCHEMA_V8 = """
+CREATE TABLE reports(
+ id INTEGER PRIMARY KEY,
+ period_type TEXT NOT NULL CHECK(period_type IN ('weekly','monthly')),
+ period_start TEXT NOT NULL CHECK(date(period_start) IS NOT NULL AND date(julianday(period_start))=period_start),
+ period_end TEXT NOT NULL CHECK(date(period_end) IS NOT NULL AND date(julianday(period_end))=period_end),
+ generated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+ pdf BLOB NOT NULL CHECK(length(pdf) > 0),
+ CHECK(period_end >= period_start),
+ UNIQUE(period_type, period_start));
+CREATE INDEX idx_reports_end ON reports(period_type, period_end);
+CREATE TABLE report_deliveries(
+ report_id INTEGER NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
+ user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ sent_at TEXT,
+ attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0),
+ last_error TEXT CHECK(last_error IS NULL OR (length(last_error) BETWEEN 1 AND 40 AND last_error NOT GLOB '*[^a-z_0-9]*')),
+ PRIMARY KEY(report_id, user_id));
+CREATE INDEX idx_report_deliveries_unsent ON report_deliveries(report_id) WHERE sent_at IS NULL;
+CREATE TABLE report_settings(
+ id INTEGER PRIMARY KEY CHECK(id=1),
+ mail_enabled INTEGER NOT NULL DEFAULT 0 CHECK(mail_enabled IN (0,1)),
+ changed_at TEXT,
+ changed_by INTEGER REFERENCES users(id) ON DELETE SET NULL);
+INSERT INTO report_settings(id) VALUES(1)
+"""
+
 # user_version -> script that upgrades from (version-1). Append only; never edit a released entry.
-MIGRATIONS: dict[int, str] = {1: SCHEMA_V1, 2: SCHEMA_V2, 3: SCHEMA_V3, 4: SCHEMA_V4, 5: SCHEMA_V5, 6: SCHEMA_V6}
+MIGRATIONS: dict[int, str] = {1: SCHEMA_V1, 2: SCHEMA_V2, 3: SCHEMA_V3, 4: SCHEMA_V4, 5: SCHEMA_V5, 6: SCHEMA_V6,
+                              7: SCHEMA_V7, 8: SCHEMA_V8}
 LATEST_VERSION = max(MIGRATIONS)
 # Versions whose script rebuilds a table that other tables reference: run with foreign_keys=OFF + foreign_key_check.
 _FK_OFF_VERSIONS = frozenset({2, 3, 4, 5})

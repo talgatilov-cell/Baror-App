@@ -9,6 +9,8 @@
   carries the final name. Backups are mode 0600 (they contain password hashes and performance data).
 * Keeps the newest ``--keep`` backups; only files matching the exact naming pattern are ever deleted.
 * Restore keeps the current database as ``<db>.before-restore`` and refuses to restore a backup that fails the check.
+  It also switches the automatic e-mailing of reports OFF in the restored file (the chief turns it on again on the
+  screen), so a restore can never re-send reports.
 """
 from __future__ import annotations
 
@@ -81,7 +83,21 @@ def restore(backup_path: Path, db_path: Path) -> Path | None:
     shutil.copyfile(backup_path, tmp)
     os.chmod(tmp, 0o600)
     os.replace(tmp, db_path)
+    _switch_report_mail_off(db_path)
     return saved
+
+
+def _switch_report_mail_off(db_path: Path) -> None:
+    """Restored data must not start sending reports by itself. A backup older than schema v8 has no such table: skip."""
+    c = sqlite3.connect(db_path)
+    try:
+        c.execute("UPDATE report_settings SET mail_enabled=0, changed_at=strftime('%Y-%m-%dT%H:%M:%SZ','now'), "
+                  "changed_by=NULL WHERE mail_enabled=1")
+        c.commit()
+    except sqlite3.OperationalError:
+        pass
+    finally:
+        c.close()
 
 
 def main(argv=None) -> int:

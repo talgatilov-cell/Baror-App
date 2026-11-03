@@ -116,8 +116,8 @@ class Instructor(StaffBase):
         body = md(at)
         self.assertEqual(body.count(":material/flag: " + t("status_fail")), 3)         # three runs below the pass level
         self.assertEqual(body.count(":material/military_tech: " + t("status_excellent")), 3)   # three push-up results
-        self.assertIn("**" + t("test_run") + "**", body)
-        self.assertIn("**" + t("test_pushups") + "**", body)
+        self.assertIn("**" + t("col_best_run") + "**", body)             # the card shows the BEST value of each test
+        self.assertIn("**" + t("col_best_pushups") + "**", body)
         self.assertEqual(len(ids), 3)
 
     def test_there_is_no_overall_verdict_anywhere(self):
@@ -166,6 +166,105 @@ class Instructor(StaffBase):
         flt.set_value(self.pb).run()
         self.assertEqual(names_in_cards(at), ["Bet-B"])
         self.assertNotIn("Gimel-C", texts(at))
+
+
+class InstructorProgress(StaffBase):
+    """Best values on the card; the progress chart and the full history only after the cadet is opened."""
+
+    def setUp(self):
+        super().setUp()
+        # Alef-A: 3 results; best run 13:50 (older), best push-ups 45 (newest); latest run 15:10, latest push-ups 45.
+        repo.add_result(self.path, self.ca, test_date="2026-09-01", run_tenths=8300, pushups=35)
+        repo.add_result(self.path, self.ca, test_date="2026-10-15", run_tenths=9100, pushups=45)
+        self.other = self.cadet("o@example.com", "Other-A", gender="M")
+        ops.set_user_platoon(self.path, self.other, self.pa)
+        repo.add_result(self.path, self.other, test_date="2026-10-01", run_tenths=9500, pushups=20)
+
+    def open_cadet(self, at, cid):
+        at.button(key=f"ins_open_{cid}").click()
+        return at.run()
+
+    def chart_keys(self, at):
+        return [e.key for e in at.get("plotly_chart")] if at.get("plotly_chart") else []
+
+    def test_the_card_shows_the_best_values_with_a_level_and_no_chart(self):
+        at = self.sign_in("ins@example.com")
+        self.assertFalse(at.exception)
+        body = md(at)
+        self.assertIn("**" + t("col_best_run") + "** 13:50", body.replace("⁨", "").replace("⁩", ""))
+        self.assertIn("**" + t("col_best_pushups") + "** 45", body.replace("⁨", "").replace("⁩", ""))
+        self.assertIn(":material/military_tech: " + t("status_excellent"), body)       # 45 push-ups
+        self.assertEqual(self.chart_keys(at), [], "no chart until a cadet is opened")
+        self.assertEqual(len([b for b in at.button if b.key.startswith("ins_open_")]), 2)
+        self.assertEqual(audit_rows(self.path, "cohort.cadet"), [])
+
+    def test_opening_a_cadet_reads_once_and_shows_the_chart_and_the_full_history(self):
+        at = self.open_cadet(self.sign_in("ins@example.com"), self.ca)
+        self.assertFalse(at.exception)
+        self.assertEqual(audit_rows(self.path, "cohort.cadet"), [(self.ins, "cohort.cadet", self.ca, "ok")])
+        self.assertEqual(len(self.chart_keys(at)), 1)
+        self.assertIn(t("trend_title"), [x.value for x in at.subheader])
+        self.assertIn(t("chief_opened_logged"), texts(at))
+        self.assertIn(f"ins_close_{self.ca}", [b.key for b in at.button])
+        history = [e for e in at.expander if e.label == t("history_title")]
+        self.assertEqual(len(history), 1)
+        rows = [m.value for m in history[0].markdown if "·" in m.value]                 # one test row per value: 'test value · dd/mm'
+        self.assertEqual(len(rows), 6, "three stored results, two tests each")
+        for day in ("01/09", "15/10", "01/10"):                                         # all of Alef-A's dates
+            self.assertTrue(any(day in d for d in rows), day)
+        at.run()                                                                       # a rerun is not a second read
+        at.run()
+        self.assertEqual(len(audit_rows(self.path, "cohort.cadet")), 1)
+
+    def test_a_second_cadet_closes_the_first(self):
+        at = self.open_cadet(self.sign_in("ins@example.com"), self.ca)
+        at = self.open_cadet(at, self.other)
+        keys = [b.key for b in at.button]
+        self.assertIn(f"ins_close_{self.other}", keys)
+        self.assertIn(f"ins_open_{self.ca}", keys, "the first cadet closed again")
+        self.assertNotIn(f"ins_close_{self.ca}", keys)
+        self.assertEqual(len(self.chart_keys(at)), 1)
+
+    def test_closing_hides_the_details_and_signing_out_forgets_them(self):
+        at = self.open_cadet(self.sign_in("ins@example.com"), self.ca)
+        self.assertIn("_staff_open", at.session_state)
+        at.button(key=f"ins_close_{self.ca}").click()
+        at.run()
+        self.assertEqual(self.chart_keys(at), [])
+        self.assertNotIn(t("chief_opened_logged"), texts(at))
+        at = self.open_cadet(at, self.ca)
+        at.button(key="logout_top").click()
+        at.run()
+        self.assertNotIn("_staff_open", at.session_state)
+
+    def test_one_or_two_points_still_chart_and_an_empty_cadet_has_no_toggle(self):
+        quiet = self.cadet("quiet@example.com", "Quiet", gender="F")
+        ops.set_user_platoon(self.path, quiet, self.pa)
+        at = self.sign_in("ins@example.com")
+        self.assertIn(t("no_results_cadet"), texts(at))
+        self.assertNotIn(f"ins_open_{quiet}", [b.key for b in at.button])
+        at = self.open_cadet(at, self.other)                                           # a single result
+        self.assertFalse(at.exception)
+        self.assertEqual(len(self.chart_keys(at)), 1)
+
+    def test_only_granted_platoons_can_be_opened_and_accommodation_buttons_still_work(self):
+        at = self.sign_in("ins@example.com")
+        self.assertNotIn(f"ins_open_{self.cb}", [b.key for b in at.button])
+        self.assertEqual(sorted(b.key for b in at.button if b.key.startswith("ins_open_")),
+                         sorted([f"ins_open_{self.ca}", f"ins_open_{self.other}"]))
+        at = self.open_cadet(at, self.ca)
+        at.button(key=f"accadd_{self.ca}").click()
+        at.run()
+        self.assertFalse(at.exception)
+        self.assertIn(f"ins_close_{self.ca}", [b.key for b in at.button], "the dialog does not close the details")
+
+    def test_an_admin_sees_the_same_screen_and_there_is_no_verdict(self):
+        adm = self.cadet("adm@example.com", "Adm", role="admin")
+        ops.grant_platoon(self.path, adm, self.pa)
+        at = self.open_cadet(self.sign_in("adm@example.com"), self.ca)
+        self.assertFalse(at.exception)
+        body = texts(at) + md(at)
+        self.assertIsNone(VERDICT.search(body), VERDICT.search(body))
 
 
 def table_of(at) -> list[dict]:
@@ -302,6 +401,10 @@ class Accommodations(StaffBase):
                                           end_date=iso(self.today + dt.timedelta(days=40)))
 
     def test_the_instructor_card_shows_gender_records_dates_status_and_who_recorded_them(self):
+        body = md(self.sign_in("ins@example.com"))
+        self.assertIn(t("acc_approval_pending"), body, "the cadet's own entry waits for the chief")
+        self.assertNotIn(t("acc_status_active"), body, "a record that is not approved is never 'in effect'")
+        accommodations.approve_request(self.path, self.boss, self.rec_cadet)
         body = md(self.sign_in("ins@example.com"))
         self.assertIn(t("staff_gender", gender=t("gender_male")), texts(self.sign_in("ins@example.com")))
         self.assertIn(t("acc_source_cadet"), body)                       # the cadet's own entry is labelled as such

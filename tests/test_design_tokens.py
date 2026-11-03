@@ -71,6 +71,40 @@ class CardOverThePicture(unittest.TestCase):
             self.assertIn("background:var(--bg)", block.replace(" ", ""), selector)
 
 
+class PinnedBars(unittest.TestCase):
+    """The top bar stays put while the page scrolls under it, like the bottom bar (browser-checked at 390 and 1366 px)."""
+
+    CODE = re.sub(r"/\*.*?\*/", "", CSS, flags=re.S)
+
+    def block(self, selector):
+        return re.search(re.escape(selector) + r"\{([^}]*)\}", self.CODE).group(1).replace(" ", "").replace("\n", "")
+
+    def test_top_bar_is_fixed_centred_and_below_dialogs(self):
+        bar, nav = self.block(".st-key-top_bar"), self.block(".st-key-bottom_nav")
+        for needle in ("position:fixed", "inset-block-start:0", "inset-inline:0", "max-width:46rem", "margin-inline:auto",
+                       "env(safe-area-inset-top)"):
+            self.assertIn(needle, bar, needle)
+        z = lambda b: int(re.search(r"z-index:(\d+)", b).group(1))
+        self.assertEqual(z(bar), z(nav))
+        self.assertLess(z(bar), 1000000)                   # Streamlit's dialog overlay is far above
+
+    def test_the_card_keeps_room_under_the_top_bar(self):
+        rule = re.search(r"\.stApp:has\(\.st-key-top_bar\) \[data-testid=\"stMainBlockContainer\"\]\{([^}]*)\}", self.CODE)
+        self.assertIsNotNone(rule)
+        self.assertIn("padding-block-start:calc(var(--tap)+1rem+env(safe-area-inset-top))", rule.group(1).replace(" ", "").replace("\n", ""))
+
+    def test_the_card_keeps_room_above_the_bottom_bar(self):
+        rule = re.search(r"stMainBlockContainer\"\]\{\s*padding-block:1rem calc\(([^;]*)\);", CSS).group(1)
+        self.assertIn("var(--tap) + 3.25rem + env(safe-area-inset-bottom)", rule)     # 48 + 52 + inset > the 73 px bar
+
+    def test_keyboard_focus_is_scrolled_clear_of_both_bars(self):
+        self.assertRegex(self.CODE, r'\[data-testid="stMain"\]\{\s*scroll-padding-block:calc\(var\(--tap\) \+ 1\.5rem \+ env'
+                                    r'\(safe-area-inset-top\)\) calc\(var\(--tap\) \+ 2\.5rem \+ env\(safe-area-inset-bottom\)\)')
+
+    def test_streamlits_empty_header_does_not_swallow_taps_meant_for_the_bar(self):
+        self.assertIn('[data-testid="stHeader"]{pointer-events:none}', self.CODE)
+
+
 class Contrast(unittest.TestCase):
     def colour(self, name):
         return name if name.startswith("#") else token(name)

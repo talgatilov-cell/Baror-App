@@ -314,6 +314,16 @@ class SessionRules(AppCase):
         with mock.patch.object(st, "context", types.SimpleNamespace(cookies={ui_session.COOKIE: good})):
             self.assertFalse(self.in_app(AppTest.from_file(APP, default_timeout=60).run()))
 
+    def test_signed_out_message_is_not_inside_the_top_bar(self):
+        """The top bar is hidden after sign-out; a message drawn inside it would be hidden with it (found in a browser)."""
+        at = self.profile(self.signed_in())
+        btn(at, t("btn_logout")).click()
+        at.run()
+        bar = next(b for b in at.main if getattr(b, "key", None) == "top_bar")
+        inside = [str(e.value) for e in bar.get("text")]
+        self.assertEqual(inside, [])
+        self.assertIn(t("logged_out"), texts(at))
+
     def test_logout_revokes_the_token_clears_the_cookie_and_the_next_run_is_signed_out(self):
         at = self.signed_in()
         token = self.set_cookie.call_args.args[0]
@@ -684,7 +694,7 @@ class CadetAccommodations(AppCase):
         at.button(key="acc_save").click()
         at.run()
         self.assertFalse(at.exception)
-        self.assertEqual(at.success[0].value, t("acc_added"))
+        self.assertEqual(at.success[0].value, t("acc_sent_for_approval"), "the cadet is told the record waits for the chief")
         rows = accommodations.list_own(self.path, 1)
         self.assertEqual([(r["kind"], r["scope"], r["source"], r["note"]) for r in rows], [("exemption", "run", "cadet", "Ankle sprain")])
         self.assertIn(t("acc_source_cadet"), texts(self.tab(at)) + "\n".join(str(m.value) for m in at.markdown))

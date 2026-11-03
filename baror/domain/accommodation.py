@@ -4,6 +4,11 @@ A record is a kind, what it covers (scope), a start and an end date, an optional
 (who recorded it). Whether it is upcoming, active or expired is never stored: ``status`` computes it from today's date,
 which the caller supplies (Israel time), so the answer cannot go stale in the database.
 
+APPROVAL: a record entered by a cadet is 'pending' until the chief decides ('approved' or 'rejected'); records of staff
+start 'approved'. Only an 'approved' record is IN EFFECT: ``status`` reports 'pending' / 'rejected' for the others (never
+'active', whatever the dates) and ``covers`` is False for them. A record dict without an ``approval`` key (only ever a
+hand-made one: every dict from ``baror.storage.accommodations`` carries it) is read as approved.
+
 ``validate`` is the one place that decides what may be stored; ``baror.storage.accommodations`` calls it and the
 database CHECK constraints are the backstop. Notes may hold digits (unlike names) but no markup characters.
 """
@@ -18,6 +23,7 @@ from baror.errors import ValidationError
 KINDS = ("relief", "exemption")                      # הקלה, פטור
 SCOPES = ("run", "pushups", "both")
 SOURCES = ("cadet", "instructor", "chief", "admin")
+APPROVALS = ("pending", "approved", "rejected")      # a cadet's own record starts 'pending'; only 'approved' is in effect
 NOTE_MAX = 100
 MAX_PER_CADET = 30                                   # a cap per account: one cadet cannot fill the staff screens or the PDF
 MAX_YEARS = 3                                        # the end date is at most this long after the start date
@@ -80,8 +86,17 @@ def validate(kind, scope, start_date, end_date, note, today: dt.date) -> dict:
             "note": _clean_note(note)}
 
 
+def in_effect(record: dict) -> bool:
+    """Only an approved record counts; pending and rejected ones are shown but never applied."""
+    return record.get("approval", "approved") == "approved"
+
+
 def status(record: dict, today: dt.date) -> str:
-    """'upcoming' (starts after today), 'expired' (ended before today) or 'active' (today is inside, ends included)."""
+    """'pending' / 'rejected' (not approved: the dates do not matter), else 'upcoming' (starts after today), 'expired'
+    (ended before today) or 'active' (today is inside, ends included)."""
+    approval = record.get("approval", "approved")
+    if approval != "approved":
+        return approval if approval in APPROVALS else "pending"       # an unknown value is never in effect
     if dt.date.fromisoformat(record["start_date"]) > today:
         return "upcoming"
     if dt.date.fromisoformat(record["end_date"]) < today:
@@ -90,6 +105,8 @@ def status(record: dict, today: dt.date) -> str:
 
 
 def covers(record: dict, test: str) -> bool:
-    """Does the record apply to 'run' (also the walk track) or 'pushups'?"""
+    """Does the record apply to 'run' (also the walk track) or 'pushups'? Never true for a record not in effect."""
+    if not in_effect(record):
+        return False
     scope = record["scope"]
     return scope == "both" or scope == ("pushups" if test == "pushups" else "run")

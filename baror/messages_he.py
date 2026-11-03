@@ -144,7 +144,7 @@ M = {
     "unassigned": "ללא מחלקה", "cadets_count": "{n} צוערים", "cadets_count_one": "צוער אחד", "cadets_count_two": "שני צוערים",
     "col_name": "שם", "col_platoon": "מחלקה", "col_date": "תאריך",
     "col_run": "ריצה אחרונה", "col_pushups": "שכיבות אחרונות", "col_best_run": "שיא ריצה",
-    "col_best_pushups": "שיא שכיבות", "col_metric": "מדד", "col_results": "תוצאות", "col_status": "סטטוס",
+    "col_best_walk": "שיא הליכה", "col_best_pushups": "שיא שכיבות", "col_metric": "מדד", "col_results": "תוצאות", "col_status": "סטטוס",
     "col_excellent": "הצטיינות", "col_pass": "הושג הרף", "col_fail": "טרם הושג הרף", "col_n": "מספר",
     "metric_run": "ריצה 3 ק״מ", "metric_walk": "הליכה 6 ק״מ", "metric_pushups": "שכיבות סמיכה",
     "total_row": "סך הכול (קבוצות מוצגות בלבד)",
@@ -157,14 +157,15 @@ M = {
     # ---- section: round 2 UI ----
     "acc_tab_label": "הקלות",
     "acc_title": "הקלות ופטורים", "acc_none": "אין הקלות או פטורים רשומים.",
-    "acc_cadet_warning": "הקלות ופטורים שנרשמים כאן נבדקים על ידי המדריכים וראש הקורס. רשומה שנשמרה אי אפשר לערוך או למחוק. "
+    "acc_cadet_warning": "הקלות ופטורים שנרשמים כאן נשלחים לאישור ראש הקורס ונבדקים גם על ידי המדריכים. "
+                         "רק רשומה שאושרה נכנסת לתוקף. רשומה שנשמרה אי אפשר לערוך או למחוק. "
                          "מחיקה אפשרית רק בבקשת מדריך ובאישור ראש הקורס.",
     "acc_add_title": "הוספת הקלה או פטור",
     "field_acc_kind": "סוג", "field_acc_scope": "תחום", "field_acc_start": "תאריך התחלה", "field_acc_end": "תאריך סיום",
     "field_acc_note": "הערה (לא חובה)",
     "btn_acc_save": "שמירת הרשומה", "btn_add_accommodation": "הוספת הקלה או פטור", "acc_added": "הרשומה נשמרה.",
     "acc_dates": "{start} עד {end}",
-    "acc_pending_chief": "ממתין לאישור ראש הקורס",
+    "acc_pending_chief": "ממתין להחלטה על מחיקה",      # the DELETION-pending badge (not the approval badge acc_approval_pending)
     "btn_request_delete": "בקשת מחיקה", "btn_send_request": "שליחת הבקשה",
     "acc_request_title": "בקשת מחיקה?",
     "acc_request_body": "הבקשה תועבר לראש הקורס לאישור. עד האישור הרשומה תישאר גלויה.",
@@ -172,12 +173,12 @@ M = {
     "acc_koam": "כ.מ: הליכה 6 ק״מ",
     "staff_gender": "מגדר: {gender}",
     "acc_active_marker": "הקלה או פטור בתוקף",
-    "chief_pending_title": "בקשות מחיקה ממתינות", "chief_pending_none": "אין בקשות ממתינות.",
-    "chief_pending_one": "בקשה אחת ממתינה לאישור", "chief_pending_many": "{n} בקשות ממתינות לאישור",
-    "acc_requested_by_label": "הבקשה הוגשה על ידי",
-    "btn_approve_delete": "אישור מחיקה", "btn_reject_delete": "דחיית הבקשה", "btn_delete_record": "מחיקת הרשומה",
+    "chief_pending_title": "בקשות למחיקת רשומה", "chief_pending_none": "אין בקשות מחיקה ממתינות.",
+    "chief_pending_one": "בקשת מחיקה אחת ממתינה להחלטה", "chief_pending_many": "{n} בקשות מחיקה ממתינות להחלטה",
+    "acc_requested_by_label": "הבקשה למחיקה הוגשה על ידי",
+    "btn_approve_delete": "אישור מחיקה", "btn_reject_delete": "דחיית בקשת המחיקה", "btn_delete_record": "מחיקת הרשומה",
     "acc_approve_title": "אישור מחיקה?", "acc_approve_body": "הרשומה תימחק לצמיתות ולא ניתן לשחזר אותה.",
-    "acc_deleted": "הרשומה נמחקה.", "acc_rejected": "הבקשה נדחתה.",
+    "acc_deleted": "הרשומה נמחקה.", "acc_rejected": "בקשת המחיקה נדחתה. הרשומה נשארה.",
     "chief_chart_title": "תוצאות לפי מחלקה",
     "chief_kpi_note": "אחוז הצוערים שהושג להם הרף בכל מבחן בנפרד, בקבוצות המוצגות בלבד.",
     "chief_chart_alt": "גרף עמודות מוערם: לכל מחלקה, מספר הצוערים בכל רמה.",
@@ -193,6 +194,17 @@ M = {
     "acc_source_chief": "הוזן על ידי הפיקוד", "acc_source_admin": "הוזן על ידי מנהל המערכת",
     "acc_status_upcoming": "עתידי", "acc_status_active": "בתוקף", "acc_status_expired": "פג תוקף",
     "acc_delete_pending": "בקשת מחיקה ממתינה לאישור",
+    # approval step: a cadet's own record waits for the chief; only an approved record is in effect
+    "acc_approval_pending": "ממתין לאישור ראש הקורס", "acc_approval_approved": "אושר", "acc_approval_rejected": "נדחה",
+    # the chief's list of accommodation REQUESTS (a cadet's own entries waiting for approval); not the deletion requests
+    "chief_requests_title": "בקשות הקלה ופטור ממתינות", "chief_requests_none": "אין בקשות הקלה או פטור ממתינות.",
+    "chief_requests_one": "בקשה אחת ממתינה להחלטה", "chief_requests_many": "{n} בקשות ממתינות להחלטה",
+    "acc_submitted_on": "הבקשה הוגשה בתאריך {date}",
+    "btn_approve_request": "אישור הבקשה", "btn_reject_request": "דחיית הבקשה",
+    "acc_request_approved": "הבקשה אושרה.", "acc_request_rejected": "הבקשה נדחתה.",
+    "acc_reject_request_title": "דחיית הבקשה?",
+    "acc_reject_request_body": "הרשומה תישאר גלויה לצוער ולצוות עם הסימון נדחה, ולא תיכנס לתוקף. אי אפשר לשנות את ההחלטה.",
+    "acc_sent_for_approval": "הבקשה נשמרה וממתינה לאישור ראש הקורס.",
     # the PDF export of the cadet's own data
     "pdf_title": "הנתונים שלי", "pdf_generated": "הופק בתאריך {date}", "pdf_email": "אימייל: {email}",
     "pdf_section_results": "תוצאות", "pdf_section_accommodations": "הקלות ופטורים",
@@ -205,6 +217,64 @@ M = {
     "pdf_no_results": "עוד אין תוצאות.", "pdf_no_accommodations": "לא נרשמו הקלות או פטורים.",
     "pdf_no_views": "אין צפיות רשומות בתוצאות.", "pdf_reader_gone": "חשבון שאינו קיים עוד",
     "pdf_page": "עמוד {n} מתוך {total}",
+    # ---- aggregated period reports (weekly on Thursday, monthly at month end): chief screen, PDF, e-mail
+    "report_section_title": "דוחות",
+    "report_intro": "דוחות מצטברים ללא שמות. דוח שבועי נוצר בכל יום חמישי, ודוח חודשי נוצר בסוף החודש. פתיחת דוח נרשמת ביומן.",
+    "report_type_label": "סוג הדוח", "report_type_weekly": "שבועי", "report_type_monthly": "חודשי",
+    "report_list_empty": "עוד לא נוצרו דוחות מסוג זה.",
+    "report_row_weekly": "שבוע {start} עד {end}", "report_row_monthly": "{label}, נתונים עד {end}",
+    "report_row_generated": "הופק בתאריך {date}",
+    "report_btn_prepare": "הכנה להורדה", "report_btn_download": "הורדת הדוח",
+    "report_prepared": "הדוח מוכן להורדה. הפתיחה נרשמה ביומן.",
+    "report_older": "דוחות קודמים",
+    "report_mail_toggle": "שליחה אוטומטית בדואר אלקטרוני",
+    "report_mail_explain": "כשהשליחה פועלת, כל דוח חדש נשלח כקובץ PDF לכל חשבון פעיל של ראש הקורס. דוחות שנוצרו לפני "
+                           "ההפעלה לא נשלחים. כשהשליחה כבויה, הדוחות נשמרים כאן להורדה בלבד.",
+    "report_mail_on_since": "השליחה פועלת מאז {date}.", "report_mail_off_note": "השליחה כבויה.",
+    "report_mail_not_configured": "השליחה פועלת, אך הגדרות שרת הדואר חסרות, ולכן לא יישלח דבר. יש לפנות למפעיל המערכת.",
+    "report_mail_privacy": "הדוחות מכילים נתונים מצטברים בלבד. דואר אלקטרוני אינו מוצפן מקצה לקצה.",
+    "report_mail_saved": "ההגדרה נשמרה ונרשמה ביומן.",
+    "report_month_1": "ינואר", "report_month_2": "פברואר", "report_month_3": "מרץ", "report_month_4": "אפריל",
+    "report_month_5": "מאי", "report_month_6": "יוני", "report_month_7": "יולי", "report_month_8": "אוגוסט",
+    "report_month_9": "ספטמבר", "report_month_10": "אוקטובר", "report_month_11": "נובמבר", "report_month_12": "דצמבר",
+    # the PDF
+    "report_pdf_title_weekly": "דוח שבועי מצטבר", "report_pdf_title_monthly": "דוח חודשי מצטבר",
+    "report_pdf_course": "קורס {name}", "report_pdf_period": "התקופה: {start} עד {end}",
+    "report_pdf_month": "חודש {label}", "report_pdf_data_until": "נתונים עד {date}",
+    "report_pdf_section_course": "סיכום הקורס כולו", "report_pdf_section_platoon": "מחלקה {platoon}",
+    "report_hidden": "לא מוצג (קבוצה קטנה)",
+    "report_platoon_hidden": "מחלקה {platoon}: לא מוצגת (קבוצה קטנה)",
+    "report_line_cadets": "צוערים פעילים: {v}", "report_line_tested": "צוערים שנבחנו בתקופה: {v}",
+    "report_line_results": "תוצאות שנרשמו בתקופה: {v}",
+    "report_empty": "לא נרשמו תוצאות בתקופה זו.",
+    "report_col_test": "מבחן", "report_col_n": "מספר צוערים", "report_col_avg": "ממוצע", "report_col_best": "שיא",
+    "report_col_change": "שינוי בממוצע",
+    "report_test_hidden": "{test}: לא מוצג (קבוצה קטנה)",
+    "report_change_faster": "קצר ב-{v}", "report_change_slower": "ארוך ב-{v}",
+    "report_change_more": "גבוה ב-{v}", "report_change_less": "נמוך ב-{v}", "report_change_same": "ללא שינוי",
+    "report_omitted": "—",
+    "report_section_acc": "הקלות ופטורים בתוקף בתקופה", "report_acc_col_kind": "סוג",
+    "report_acc_hidden": "הקלות ופטורים: לא מוצג (קבוצה קטנה)",
+    "report_section_notes": "הערות",
+    "report_note_cohort": "הדוח כולל צוערים פעילים בלבד, ללא שמות.",
+    "report_note_latest": "לכל צוער ובכל מבחן נספרת התוצאה האחרונה בתקופה, לפי תאריך הבוחן. מספר הצוערים בכל רמה, "
+                          "הממוצע, השיא והשינוי מבוססים עליה. מספר התוצאות כולל את כל התוצאות שנרשמו בתקופה.",
+    "report_note_weekly": "תקופה שבועית: מיום שישי עד יום חמישי, לפי תאריך הבוחן.",
+    "report_note_monthly": "תקופה חודשית: מתחילת החודש ועד תאריך ההפקה, לפי תאריך הבוחן. כשהחודש מסתיים בסוף שבוע, "
+                           "תוצאות מהימים שאחרי תאריך ההפקה אינן כלולות כאן, והן מופיעות בדוח השבועי הבא.",
+    "report_note_small": "קבוצות של פחות מ-5 צוערים אינן מוצגות, וגם אין עבורן מספר. סיכום הקורס כולל את הקבוצות "
+                         "המוצגות בלבד, ולכן אי אפשר לחשב קבוצה מוסתרת בחיסור.",
+    "report_note_change": "שינוי בממוצע לעומת התקופה הקודמת ({start} עד {end}) מוצג רק כשבשתי התקופות יש לפחות 5 "
+                          "צוערים עם ערך באותה קבוצה.",
+    "report_note_acc": "הקלות ופטורים: רשומות מאושרות שהיו בתוקף ביום כלשהו בתקופה. המספר הוא מספר צוערים לכל סוג ותחום.",
+    "report_note_grading": "כל מבחן מדורג בנפרד. אין ציון כולל ואין קביעה כוללת.",
+    # the e-mail
+    "report_mail_subject_weekly": "בר-אור: דוח שבועי מצטבר, {start} עד {end}",
+    "report_mail_subject_monthly": "בר-אור: דוח חודשי מצטבר, {label}",
+    "report_mail_body_weekly": "שלום,\nהדוח השבועי המצורף מכסה את התקופה {start} עד {end}.\n"
+                               "הדוח המצורף מכיל נתונים מצטברים בלבד.",
+    "report_mail_body_monthly": "שלום,\nהדוח החודשי המצורף מכסה את {label}, עם נתונים עד {end}.\n"
+                                "הדוח המצורף מכיל נתונים מצטברים בלבד.",
 }
 
 # Tips and videos as cards (T7). Substance of the tips is the original app's text, rewritten as short bullets in
@@ -269,6 +339,11 @@ VIDEOS = {
 
 def t(key: str, **params) -> str:
     return M[key].format(**params)
+
+
+def month_label(d) -> str:
+    """'נובמבר 2026' for any date of that month (the Hebrew month name from the catalogue)."""
+    return f"{M['report_month_' + str(d.month)]} {d.year}"
 
 
 # ---------------------------------------------------------------------------------------------------------- errors

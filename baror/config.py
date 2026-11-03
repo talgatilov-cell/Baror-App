@@ -10,14 +10,23 @@
     BAROR_COHORT_VIEWS    "1" shows the instructor and chief screens (default off until the owner approves the
                           notice that cadets are given about them)
 
+Outgoing mail (only the report script reads these, via ``mail_from_env``; unset BAROR_SMTP_HOST = mail is not configured):
+    BAROR_SMTP_HOST       SMTP server host name
+    BAROR_SMTP_PORT       port (default 587 for starttls, 465 for ssl)
+    BAROR_SMTP_MODE       "starttls" (default) or "ssl"; there is NO plain mode: TLS with certificate verification is required
+    BAROR_SMTP_USER       login (required unless the host is this machine)
+    BAROR_SMTP_PASSWORD   password (never logged, never part of a repr)
+    BAROR_SMTP_FROM       sender address
+
 Invalid values raise ``ConfigError`` with a readable internal detail; nothing here logs or echoes secrets.
 """
 from __future__ import annotations
 
 import ipaddress
 import os
+import re
 import zoneinfo
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping
 
@@ -97,3 +106,51 @@ def from_env(env: Mapping[str, str] | None = None) -> Config:
     return Config(db_path=db_path, session_days=days, tz_name=tz_name,
                   cohort_views=_flag(env.get("BAROR_COHORT_VIEWS"), "BAROR_COHORT_VIEWS"),
                   trusted_proxies=_proxies(env.get("TRUSTED_PROXIES")), bot_min_seconds=bot_min)
+
+
+@dataclass(frozen=True)
+class MailConfig:
+    host: str
+    port: int
+    mode: str                                   # 'starttls' | 'ssl'
+    sender: str
+    user: str | None = None
+    password: str | None = field(default=None, repr=False)      # never shown in a repr or a log line
+
+
+_ADDRESS = re.compile(r"^[^\s@<>,;\"']{1,64}@[A-Za-z0-9.\-]{1,255}$")
+
+
+def valid_address(value: str) -> bool:
+    """A single plain address: no spaces, no CR/LF, no list separators or display-name syntax (header-injection safe)."""
+    return isinstance(value, str) and len(value) <= 254 and bool(_ADDRESS.fullmatch(value))
+
+
+def mail_from_env(env: Mapping[str, str] | None = None) -> MailConfig | None:
+    """None when BAROR_SMTP_HOST is unset or blank (mail not configured). Otherwise a validated ``MailConfig``;
+    ``ConfigError`` (detail names the variable, never its value) when it is incomplete or unsafe."""
+    env = os.environ if env is None else env
+    host = (env.get("BAROR_SMTP_HOST") or "").strip()
+    if not host:
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9.\-]{1,253}", host):
+        raise ConfigError(detail="BAROR_SMTP_HOST must be a host name or address")
+    mode = (env.get("BAROR_SMTP_MODE") or "starttls").strip().lower()
+    if mode not in ("starttls", "ssl"):
+        raise ConfigError(detail="BAROR_SMTP_MODE must be starttls or ssl (plain SMTP is not supported)")
+    try:
+        port = int((env.get("BAROR_SMTP_PORT") or "").strip() or (465 if mode == "ssl" else 587))
+    except ValueError:
+        raise ConfigError(detail="BAROR_SMTP_PORT must be an integer") from None
+    if not 1 <= port <= 65535:
+        raise ConfigError(detail="BAROR_SMTP_PORT must be between 1 and 65535")
+    sender = (env.get("BAROR_SMTP_FROM") or "").strip()
+    if not valid_address(sender):
+        raise ConfigError(detail="BAROR_SMTP_FROM must be one plain e-mail address")
+    user, password = env.get("BAROR_SMTP_USER") or None, env.get("BAROR_SMTP_PASSWORD") or None
+    local = host.lower() in ("localhost", "127.0.0.1", "::1")
+    if (user is None or password is None) and not local:
+        raise ConfigError(detail="BAROR_SMTP_USER and BAROR_SMTP_PASSWORD are required for a remote mail server")
+    if any(ch in (user or "") + (password or "") for ch in "\r\n"):
+        raise ConfigError(detail="BAROR_SMTP_USER / BAROR_SMTP_PASSWORD must not contain line breaks")
+    return MailConfig(host=host, port=port, mode=mode, sender=sender, user=user, password=password)

@@ -534,7 +534,8 @@ def build_pdf(data: dict, *, today: dt.date) -> bytes:
     if records:
         rows = []
         for a in records:
-            state = t("acc_status_" + acc_rules.status(a, today))
+            status = acc_rules.status(a, today)      # 'pending' / 'rejected' when the chief has not approved the record
+            state = t(("acc_approval_" if status in ("pending", "rejected") else "acc_status_") + status)
             if a.get("delete_requested"):
                 state += ". " + t("acc_delete_pending")
             rows.append([t("acc_kind_" + a["kind"]), t("acc_scope_" + a["scope"]), _date(a["start_date"]), _date(a["end_date"]),

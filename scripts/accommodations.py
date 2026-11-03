@@ -6,7 +6,8 @@
         --scope run|pushups|both --from 2026-11-01 --to 2027-01-31 [--note "short plain text"]
     python scripts/accommodations.py --db /data/baror.db delete 12
 
-``--db`` may be replaced by the BAROR_DB environment variable. A record added here has the source 'admin'. ``delete``
+``--db`` may be replaced by the BAROR_DB environment variable. A record added here has the source 'admin' and is approved at once (a cadet's own
+records start 'pending' until the chief decides; ``list`` shows the approval). ``delete``
 bypasses the request/approve flow of the app (the operator owns the file); it is audited. The note is plain text: letters,
 digits, spaces and . , - ( ) ' (up to 100 characters), the same rule the app applies.
 
@@ -39,7 +40,7 @@ def run(args) -> int:
             for r in ops.list_accommodations(db_path):
                 pending = " (deletion requested)" if r["delete_requested"] else ""
                 print(f"{r['id']:<5}{r['cadet_name']:<24}{(r['platoon'] or '-'):<12}{r['kind']:<11}{r['scope']:<9}"
-                      f"{r['start_date']} .. {r['end_date']}  {r['source']}{pending}  {r['note'] or ''}")
+                      f"{r['start_date']} .. {r['end_date']}  {r['source']}  {r['approval']}{pending}  {r['note'] or ''}")
             return EXIT_OK
         if args.cmd == "add":
             try:

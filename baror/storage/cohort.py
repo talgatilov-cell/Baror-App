@@ -25,7 +25,7 @@ from baror.errors import AuthError, NotFoundError
 from baror.storage import accommodations, audit, db
 from baror.storage.summaries import fold_summary
 
-__all__ = ["my_platoons", "list_platoon_members", "cohort_summary", "get_cadet_results"]
+__all__ = ["my_platoons", "list_platoon_members", "cohort_summary", "get_cadet_results", "cadet_history"]
 
 _STAFF = "('instructor','admin')"
 # True when :actor may read platoon :platoon. Used as a pre-check AND embedded in every data query.
@@ -101,7 +101,8 @@ def cohort_summary(db_path, actor_id, platoon_id, *, now: dt.datetime | None = N
 
     {id,name,gender,is_km,result_count,last_test_date,
      latest_run:{test_date,run_tenths}|None, latest_pushups:{test_date,pushups}|None,
-     best_run_tenths (lowest)|None, best_pushups (highest)|None, accommodations:[...]}
+     best_run_tenths (lowest)|None, best_pushups (highest)|None, accommodations:[...],
+     best:{run_tenths,pushups} (the same two values, grouped like ``cadet_history``), results_count (= result_count)}
     'Latest' = newest test_date, ties by newest insertion. Audited with one row PER CADET read (so each cadet's
     disclosure is exact); a platoon with no cadets gets one platoon-level row.
     """
@@ -114,6 +115,9 @@ def cohort_summary(db_path, actor_id, platoon_id, *, now: dt.datetime | None = N
             f"AND {_GRANTED} ORDER BY u.name, u.id, r.test_date DESC, r.id DESC",
             {"actor": actor, "platoon": platoon}).fetchall()
         out = fold_summary(c, rows)
+        for s in out:   # additive keys only; the existing keys above are unchanged
+            s["best"] = {"run_tenths": s["best_run_tenths"], "pushups": s["best_pushups"]}
+            s["results_count"] = s["result_count"]
         if out:
             c.executemany("INSERT INTO audit_log(ts,actor_id,action,target_user_id,platoon_id) VALUES(?,?,?,?,?)",
                           [(audit.ts(now), actor, "cohort.summary", s["id"], platoon) for s in out])
@@ -123,21 +127,48 @@ def cohort_summary(db_path, actor_id, platoon_id, *, now: dt.datetime | None = N
     return _run(db_path, actor_id, "cohort.summary", platoon_id, None, now, body)
 
 
+def _read_cadet(c, actor, cadet, now):
+    """Authorised read of ONE cadet on the caller's connection: (cadet dict, result rows newest first, accommodations),
+    or None when the actor may not see this cadet. Authorised iff the target is an ACTIVE CADET whose CURRENT platoon
+    the actor is granted (the predicate is inside the SELECT). Writes the 'ok' audit row (target + platoon, no values)."""
+    t = c.execute(
+        f"SELECT t.id,t.name,t.gender,t.is_km,t.platoon_id,t.pseudonym FROM users t WHERE t.id=:cadet AND t.role='cadet' "
+        f"AND t.active=1 AND t.platoon_id IS NOT NULL AND EXISTS (SELECT 1 FROM users a JOIN instructor_platoons ip "
+        f"ON ip.instructor_id=a.id AND ip.platoon_id=t.platoon_id WHERE a.id=:actor AND a.active=1 "
+        f"AND a.role IN {_STAFF})", {"actor": actor, "cadet": cadet}).fetchone()
+    if t is None:
+        return None
+    res = c.execute("SELECT test_date,run_tenths,pushups FROM results WHERE pseudonym=? "
+                    "ORDER BY test_date DESC, id DESC", (t["pseudonym"],)).fetchall()
+    audit.record(c, actor_id=actor, action="cohort.cadet", target_user_id=t["id"], platoon_id=t["platoon_id"], now=now)
+    return ({k: t[k] for k in ("id", "name", "gender", "is_km")}, [dict(r) for r in res],
+            accommodations.fetch_public(c, [t["id"]])[t["id"]])
+
+
 def get_cadet_results(db_path, actor_id, cadet_id, *, now: dt.datetime | None = None) -> dict[str, Any]:
     """{'cadet': {id,name,gender,is_km}, 'results': [{test_date,run_tenths,pushups}] newest first,
     'accommodations': [...] newest first}.
     Authorised iff the cadet is an ACTIVE CADET whose CURRENT platoon the actor is granted. Audited per call."""
     def body(c, actor, _platoon, cadet):
-        t = c.execute(
-            f"SELECT t.id,t.name,t.gender,t.is_km,t.platoon_id,t.pseudonym FROM users t WHERE t.id=:cadet AND t.role='cadet' "
-            f"AND t.active=1 AND t.platoon_id IS NOT NULL AND EXISTS (SELECT 1 FROM users a JOIN instructor_platoons ip "
-            f"ON ip.instructor_id=a.id AND ip.platoon_id=t.platoon_id WHERE a.id=:actor AND a.active=1 "
-            f"AND a.role IN {_STAFF})", {"actor": actor, "cadet": cadet}).fetchone()
-        if t is None:
+        r = _read_cadet(c, actor, cadet, now)
+        return None if r is None else {"cadet": r[0], "results": r[1], "accommodations": r[2]}
+    return _run(db_path, actor_id, "cohort.cadet", None, cadet_id, now, body)
+
+
+def cadet_history(db_path, actor_id, cadet_id, *, now: dt.datetime | None = None) -> dict[str, Any]:
+    """Full history and best values of ONE cadet, for the progress chart:
+    {'cadet': {id,name,gender,is_km},
+     'results': [{test_date,run_tenths,pushups}] newest first (same row keys as ``chief.get_cadet_results``),
+     'best': {'run_tenths': lowest non-None | None, 'pushups': highest non-None | None},
+     'accommodations': [...] newest first}.
+    Authorisation, errors and audit are exactly those of ``get_cadet_results`` (one transaction, audited as
+    ``cohort.cadet`` so it shows in the cadet's own read disclosure). No grading: domain code does that."""
+    def body(c, actor, _platoon, cadet):
+        r = _read_cadet(c, actor, cadet, now)
+        if r is None:
             return None
-        res = c.execute("SELECT test_date,run_tenths,pushups FROM results WHERE pseudonym=? "
-                        "ORDER BY test_date DESC, id DESC", (t["pseudonym"],)).fetchall()
-        audit.record(c, actor_id=actor, action="cohort.cadet", target_user_id=t["id"], platoon_id=t["platoon_id"], now=now)
-        return {"cadet": {k: t[k] for k in ("id", "name", "gender", "is_km")}, "results": [dict(r) for r in res],
-                "accommodations": accommodations.fetch_public(c, [t["id"]])[t["id"]]}
+        runs = [x["run_tenths"] for x in r[1] if x["run_tenths"] is not None]
+        reps = [x["pushups"] for x in r[1] if x["pushups"] is not None]
+        return {"cadet": r[0], "results": r[1], "accommodations": r[2],
+                "best": {"run_tenths": min(runs) if runs else None, "pushups": max(reps) if reps else None}}
     return _run(db_path, actor_id, "cohort.cadet", None, cadet_id, now, body)

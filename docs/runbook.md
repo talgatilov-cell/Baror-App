@@ -116,3 +116,33 @@ as `unscheduled`). The audit log is not touched by the job; its own purge age is
 | Blank white page on a mistyped URL | The reverse proxy must redirect paths with two or more segments to `/` (README, "Reverse proxy"). |
 | A cadet says someone else registered their address | Section 2, "Known weakness". |
 | Suspected leaked session cookie | `deactivate` then `reactivate` the account (revokes all sessions), and reset the password (section 4). |
+
+## 9. Aggregated reports (weekly and monthly) and their e-mail
+
+Schema v8 adds the tables `reports`, `report_deliveries` and `report_settings`. **Back up first** (`scripts/backup.py`) before the first start on a real database.
+
+**What is made, and when (Israel time, weekend = Friday and Saturday).**
+- *Weekly*, every Thursday: Friday up to and including that Thursday (periods touch, no gaps).
+- *Monthly*, on the last day of the month when it is Sunday to Thursday; when the last day is a Friday or Saturday, on the Thursday before it. Period: the 1st up to that day; the PDF says "data up to <date>". A Thursday that is also the month end makes both.
+- **Known gap (owner's rule, flagged):** results dated on the Friday/Saturday after a month's generation date are in no monthly report (the next one starts on the 1st). They are in the next weekly report. If the owner wants them in the next monthly report, change `monthly_period` in `baror/domain/reports.py` (start = day after the previous report's end).
+- Content: aggregates only, no names; groups under 5 cadets are not shown; each cadet's latest result in the period per test; change vs the previous period only when both groups have at least 5. Known and accepted: a reader can subtract "cadets" and "tested" of a shown platoon to get the number who did not test. Reports are snapshots: late entries are not added afterwards.
+
+**Run it daily** (cron on the host, or a systemd timer). It exits 0 when nothing is due; running it twice is harmless (a stored report is never made again):
+
+    15 6 * * *  cd /srv/baror && docker compose exec -T baror python scripts/generate_reports.py --db /data/baror.db >> /var/log/baror-reports.log 2>&1
+
+- Missed days: `scripts/generate_reports.py --db DB --since 2026-10-29` makes whatever was due on every day since then (up to 400 days) and mails nothing that is older than the switch or than 14 days. `--date YYYY-MM-DD` runs as if it were that day. `--dry-run` writes and sends nothing and prints what is due and the switch state.
+- To make a report again (for example after correcting results): `sqlite3 DB "DELETE FROM reports WHERE period_type='weekly' AND period_start='2026-10-30'"`, then run the script with `--date` of that Thursday.
+- Exit codes: 0 ok (also "mail not configured" or "auto-send off") | 1 error (database, schema older than v8) | 2 reports stored, switch on, mail settings invalid.
+- The chief sees and downloads the reports on the chief screen, section "דוחות" (each download is audited).
+
+**E-mail (OFF by default).** The chief switches "שליחה אוטומטית בדואר אלקטרוני" on the chief screen. Check or change the state:
+
+    sqlite3 /data/baror.db "SELECT mail_enabled, changed_at, changed_by FROM report_settings"   # 0 = off
+
+Prefer the screen (it is audited). An operator can switch it off in an emergency: `UPDATE report_settings SET mail_enabled=0`. A fresh database, a migration and `scripts/backup.py --restore` all leave it OFF. Turning it on sends only reports generated after that moment (never the backlog); unsent or failed ones are retried for 14 days; one mail per report and active chief-role account (chief and deputy chief). Environment variables, for BOTH the job and the app container (the app only uses them to show the "not configured" warning), never committed:
+
+    BAROR_SMTP_HOST  BAROR_SMTP_PORT (587 starttls / 465 ssl)  BAROR_SMTP_MODE (starttls|ssl)
+    BAROR_SMTP_USER  BAROR_SMTP_PASSWORD  BAROR_SMTP_FROM
+
+TLS with certificate verification is required (no plain mode); a remote host needs a login. Logs hold counts and short codes only (`smtp_auth`, `tls`, `network`, `timeout`, `smtp_refused`, `smtp_error`), also in `report_deliveries.last_error`. Do not run two copies of the job at once. E-mail is not end-to-end encrypted: see the proposed paragraph in `docs/privacy-notice-he.md`.

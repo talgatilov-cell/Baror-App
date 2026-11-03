@@ -42,7 +42,10 @@ def sign_out(cfg: Config, user: dict, message_key: str = "logged_out") -> None:
     """Revoke this session, clear the cookie in this run, say so, and stop (no rerun)."""
     log_event("logout", user_id=user["id"])
     session.end(cfg.db_path)
-    st.html("<style>.st-key-top_bar{display:none}</style>")        # static: the signed-out view has no top bar
+    # static: the signed-out view has no top bar, so no room is kept for it either (this rule comes after the stylesheet's
+    # equally specific padding rule and wins by order)
+    st.html("<style>.st-key-top_bar{display:none}"
+            '.stApp:has(.st-key-top_bar) [data-testid="stMainBlockContainer"]{padding-block-start:1rem}</style>')
     session.sign_out_view(message_key)
 
 
@@ -53,8 +56,9 @@ def _top_bar(cfg: Config, user: dict) -> None:
             st.html('<div class="brandbar"><img src="app/static/logo.png" alt="" width="40" height="40">'
                     f'<span>{html.escape(t("app_title"))}</span></div>')
         with leave:
-            if st.button(t("btn_logout"), icon=":material/logout:", width="stretch", key="logout_top"):
-                sign_out(cfg, user)
+            leaving = st.button(t("btn_logout"), icon=":material/logout:", width="stretch", key="logout_top")
+    if leaving:             # outside the bar's container: the signed-out message must not sit inside the hidden bar
+        sign_out(cfg, user)
 
 
 def render(cfg: Config, user: dict) -> None:

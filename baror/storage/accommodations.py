@@ -4,7 +4,15 @@ WHO MAY DO WHAT (owner decision of 2026-11-03; enforced HERE, per call, from the
 * add      a cadet for THEMSELVES (source 'cadet'); an instructor or admin for an active cadet of a platoon they are
            granted (source 'instructor' / 'admin'; an admin has no implicit access, only explicit grants, exactly as in
            ``baror.storage.cohort``); the chief for any active cadet (source 'chief').
-* change   NOBODY. There is no update function. A cadet can never edit or delete a record, not even their own.
+* approve  APPROVAL STEP (owner request of 2026-11-03): a record whose source is 'cadet' starts 'pending'; records of an
+           instructor, admin or the chief start 'approved' (the chief's are auto-approved). Only the CHIEF decides a
+           pending record: ``approve_request`` makes it 'approved', ``reject_request`` makes it 'rejected' (the row is
+           KEPT and still shown, labelled; it is not deleted). decided_at / decided_by are stored; both decisions are
+           audited (``accommodation.approve`` / ``accommodation.reject``). Only an 'approved' record is in effect (see
+           ``baror.domain.accommodation``). A record is decided once: a decided or missing one is 'not visible'.
+           ``pending_requests`` lists the pending records for the chief. Deletion requests (below) are a separate thing.
+* change   NOBODY. There is no update function for the content of a record (only the approval decision and the
+           deletion-request flags ever change). A cadet can never edit or delete a record, not even their own.
 * delete   an instructor/admin may only REQUEST deletion (record of a cadet in a granted platoon); the chief APPROVES
            (the row is deleted) or REJECTS (the request is cleared), or deletes directly with ``approve_delete`` (works
            with or without a pending request). Nobody else; an operator can through ``baror.storage.ops``.
@@ -27,10 +35,11 @@ from baror.domain import accommodation as rules
 from baror.errors import AuthError, NotFoundError, ValidationError
 from baror.storage import audit, db
 
-__all__ = ["add", "list_own", "request_delete", "approve_delete", "reject_delete", "pending_deletions", "fetch_public"]
+__all__ = ["add", "list_own", "request_delete", "approve_delete", "reject_delete", "pending_deletions", "fetch_public",
+           "approve_request", "reject_request", "pending_requests"]
 
-_PUBLIC = ("id", "kind", "scope", "start_date", "end_date", "note", "source", "created_at")
-_SELECT_PUBLIC = ("SELECT id, user_id, kind, scope, start_date, end_date, note, source, created_at, "
+_PUBLIC = ("id", "kind", "scope", "start_date", "end_date", "note", "source", "approval", "created_at")
+_SELECT_PUBLIC = ("SELECT id, user_id, kind, scope, start_date, end_date, note, source, approval, created_at, "
                   "delete_requested_at IS NOT NULL AS delete_requested FROM accommodations")
 _STAFF = "('instructor','admin')"
 # True when :actor is an active instructor/admin granted the platoon of the cadet :cadet (same predicate as cohort.py)
@@ -110,7 +119,8 @@ def _today(now: dt.datetime | None, today: dt.date | None) -> dt.date:
 # --------------------------------------------------------------------------------------------------------- add
 def add(db_path, actor_id, cadet_id, *, kind, scope, start_date, end_date, note=None,
         now: dt.datetime | None = None, today: dt.date | None = None) -> int:
-    """Record an accommodation for ``cadet_id`` (the actor's own id for a cadet). Returns the new record id.
+    """Record an accommodation for ``cadet_id`` (the actor's own id for a cadet). Returns the new record id. A cadet's
+    own record is stored 'pending' (not in effect until the chief approves it); staff records are 'approved'.
     ValidationError for bad values (after authorisation, so a refusal never depends on the input)."""
     def body(c, a, cadet):
         if a["role"] == "cadet":
@@ -130,10 +140,11 @@ def add(db_path, actor_id, cadet_id, *, kind, scope, start_date, end_date, note=
         rec = rules.validate(kind, scope, start_date, end_date, note, _today(now, today))
         if c.execute("SELECT count(*) FROM accommodations WHERE user_id=?", (cadet,)).fetchone()[0] >= rules.MAX_PER_CADET:
             raise ValidationError("ACCOMMODATION_LIMIT", field="kind", detail="too many records for one cadet")
+        approval = "pending" if source == "cadet" else "approved"       # only the chief can approve a cadet's own entry
         new_id = int(c.execute(
-            "INSERT INTO accommodations(user_id,kind,scope,start_date,end_date,note,source,created_by,created_at) "
-            "VALUES(?,?,?,?,?,?,?,?,?)",
-            (cadet, rec["kind"], rec["scope"], rec["start_date"], rec["end_date"], rec["note"], source, a["id"],
+            "INSERT INTO accommodations(user_id,kind,scope,start_date,end_date,note,source,approval,created_by,created_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (cadet, rec["kind"], rec["scope"], rec["start_date"], rec["end_date"], rec["note"], source, approval, a["id"],
              audit.ts(now))).lastrowid)
         audit.record(c, actor_id=a["id"], action="accommodation.add", target_user_id=cadet, now=now)
         return new_id
@@ -142,7 +153,7 @@ def add(db_path, actor_id, cadet_id, *, kind, scope, start_date, end_date, note=
 
 # ----------------------------------------------------------------------------------------------------- deletion
 def _record_owner(c, accommodation_id):
-    return c.execute("SELECT a.id AS rid, a.user_id AS cadet, a.delete_requested_at AS requested "
+    return c.execute("SELECT a.id AS rid, a.user_id AS cadet, a.delete_requested_at AS requested, a.approval AS approval "
                      "FROM accommodations a JOIN users u ON u.id=a.user_id WHERE a.id=? AND u.role='cadet'",
                      (accommodation_id,)).fetchone()
 
@@ -212,4 +223,49 @@ def pending_deletions(db_path, actor_id, *, now: dt.datetime | None = None) -> l
         audit.record(c, actor_id=a["id"], action="accommodation.pending", now=now)
         return [dict(r) for r in rows] or [None]       # [None]: an empty answer is still a success, not 'not visible'
     out = _run(db_path, actor_id, "accommodation.pending", None, now, body)
+    return [] if out == [None] else out
+
+
+# ------------------------------------------------------------------------------------------------------ approval
+def _decide(db_path, actor_id, accommodation_id, *, outcome: str, action: str, now: dt.datetime | None) -> None:
+    rid = _id(accommodation_id)
+
+    def body(c, a, _cadet):
+        if a["role"] != "chief":
+            raise AuthError("NOT_AUTHORISED", detail="only the chief may decide an accommodation")
+        rec = _record_owner(c, rid) if rid else None
+        if rec is None or rec["approval"] != "pending":
+            return None                                   # missing, a staff account's, or already decided: 'not visible'
+        c.execute("UPDATE accommodations SET approval=?, decided_at=?, decided_by=? WHERE id=? AND approval='pending'",
+                  (outcome, audit.ts(now), a["id"], rid))
+        audit.record(c, actor_id=a["id"], action=action, target_user_id=rec["cadet"], now=now)
+        return True
+    _run(db_path, actor_id, action, None, now, body)
+
+
+def approve_request(db_path, actor_id, accommodation_id, *, now: dt.datetime | None = None) -> None:
+    """Chief only: approve a pending record (it is in effect from now on). decided_at / decided_by are stored and the
+    decision is audited. A record that is not pending is 'not visible' (NotFoundError), like a missing one."""
+    _decide(db_path, actor_id, accommodation_id, outcome="approved", action="accommodation.approve", now=now)
+
+
+def reject_request(db_path, actor_id, accommodation_id, *, now: dt.datetime | None = None) -> None:
+    """Chief only: reject a pending record. The row is KEPT with approval='rejected' (the cadet and the staff still see
+    it, labelled) and it is never in effect. Audited."""
+    _decide(db_path, actor_id, accommodation_id, outcome="rejected", action="accommodation.reject", now=now)
+
+
+def pending_requests(db_path, actor_id, *, now: dt.datetime | None = None) -> list[dict[str, Any]]:
+    """Chief only: the records waiting for approval (a cadet's own entries), oldest first. Audited as ONE row."""
+    def body(c, a, _cadet):
+        if a["role"] != "chief":
+            raise AuthError("NOT_AUTHORISED", detail="only the chief sees pending accommodations")
+        rows = c.execute(
+            "SELECT a.id, a.user_id AS cadet_id, u.name AS cadet_name, p.name AS platoon, a.kind, a.scope, a.start_date, "
+            "a.end_date, a.note, a.source, a.created_at "
+            "FROM accommodations a JOIN users u ON u.id=a.user_id LEFT JOIN platoons p ON p.id=u.platoon_id "
+            "WHERE a.approval='pending' AND u.role='cadet' ORDER BY a.created_at, a.id").fetchall()
+        audit.record(c, actor_id=a["id"], action="accommodation.pending_requests", now=now)
+        return [dict(r) for r in rows] or [None]       # [None]: an empty answer is still a success, not 'not visible'
+    out = _run(db_path, actor_id, "accommodation.pending_requests", None, now, body)
     return [] if out == [None] else out
