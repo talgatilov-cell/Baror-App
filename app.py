@@ -7,7 +7,7 @@ import streamlit as st
 
 from baror import boundary, config, startup
 from baror.messages_he import t
-from baror.ui import auth_views, session, shell, theme
+from baror.ui import auth_views, demo_switch, session, shell, theme      # demo_switch: TEMPORARY (see its docstring)
 
 
 @st.cache_resource
@@ -18,7 +18,7 @@ def _startup(env_key: tuple):
     return cfg
 
 
-def _sign_in_page(cfg):
+def _sign_in_page(cfg, real_cfg):
     with st.container(key="signin"):          # the stylesheet drops the bottom-bar padding while this container exists
         st.html('<img class="brand-logo" src="app/static/logo.png" alt="" width="72" height="72">')
         st.title(t("app_title"))
@@ -28,17 +28,19 @@ def _sign_in_page(cfg):
             user = auth_views.login_form(cfg)
         with tab_register:
             new_user = auth_views.register_form(cfg)
+        demo_switch.render_switch(real_cfg)
     return user or new_user
 
 
 def main() -> None:
     theme.apply()
-    cfg = _startup(config.env_key())
+    real_cfg = _startup(config.env_key())
+    cfg = demo_switch.effective(real_cfg)          # the real configuration unless the demo switch is on
     user = session.current_user(cfg.db_path, cfg.session_days)
     if user is None:
         slot = st.empty()
         with slot.container():
-            user = _sign_in_page(cfg)
+            user = _sign_in_page(cfg, real_cfg)
         if user is None:
             return
         slot.empty()                                          # remove the forms in the same run ...
@@ -52,6 +54,7 @@ def main() -> None:
         slot.empty()
         session.set_cookie(st.session_state[session.TOKEN_KEY], cfg.session_days)
         user = session.current_user(cfg.db_path, cfg.session_days)
+    demo_switch.banner(real_cfg)
     shell.render(cfg, user)
 
 

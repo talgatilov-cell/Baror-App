@@ -21,6 +21,12 @@ APP_NAME = "בר-אור"
 M = {
     # app (one product name everywhere)
     "app_title": "בר-אור", "app_tagline": "מעקב כשירות לצוערים",
+    # TEMPORARY demo switch (baror/ui/demo_switch.py): to be removed after the class demo
+    "demo_switch_label": "מצב הדגמה",
+    "demo_switch_help": "פותח מסד נתונים נפרד עם צוערים בדויים. המסד האמיתי אינו נפגע.",
+    "demo_accounts_intro": "חשבונות להדגמה. כל הכתובות מסתיימות ב-@example.com והסיסמה זהה לכולם:",
+    "demo_accounts_list": "צוערים: empty, one, two, twelve, walk. מדריך: ins. ראש הקורס: chief. מנהל מערכת: admin.",
+    "demo_banner": "מצב הדגמה: כל הנתונים בדויים. כדי לחזור לאפליקציה האמיתית יוצאים ומכבים את מצב ההדגמה בדף הכניסה.",
     "page_title": "בר-אור | מעקב כשירות",
     # navigation: bottom bar, noun labels
     "nav_label": "ניווט", "nav_summary": "סיכום", "nav_add": "הזנה", "nav_history": "היסטוריה", "nav_more": "עוד",

@@ -261,3 +261,6 @@ button[data-variant="segmented_control"]{flex:1 1 0; min-width:0; min-height:var
 .brand-logo{border-radius:var(--radius)}
 /* drop-down options (rendered in a portal, hence no .stApp prefix): each choice is a 48 px target */
 [role="listbox"] [role="option"]{min-height:var(--tap); box-sizing:border-box; align-items:center}
+
+/* TEMPORARY demo switch banner (remove with baror/ui/demo_switch.py) */
+.st-key-demo_banner{background:#fbf3dc; border:1px solid #e3cf8f; border-radius:var(--radius); padding-inline:.75rem; margin-block-end:.5rem}
