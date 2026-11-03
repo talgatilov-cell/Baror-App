@@ -228,6 +228,11 @@ class ServiceRegisterAndLogin(V2Case):
         self.assertEqual(sessions.resolve(self.path, tok)["role"], "cadet")
 
 
+def racer_name(i: int) -> str:
+    """A different letters-only name per thread (names may not contain digits)."""
+    return "racer " + "abcdefghijklmnopqrst"[i]
+
+
 class RegistrationRaces(V2Case):
     def test_same_listed_email_20_threads_exactly_one_winner(self):
         allowlist.add_entry(self.path, "race@example.com")
@@ -236,7 +241,7 @@ class RegistrationRaces(V2Case):
         def go(i):
             barrier.wait()
             try:
-                reg(self.path, "race@example.com", name=f"racer{i}", pw_hash=f"hash{i}")
+                reg(self.path, "race@example.com", name=racer_name(i), pw_hash=f"hash{i}")
                 outcomes.append("ok")
             except RegistrationDeniedError:
                 outcomes.append("denied")
@@ -250,7 +255,7 @@ class RegistrationRaces(V2Case):
             name, h = c.execute("SELECT name,pw_hash FROM users").fetchone()
             used_by = c.execute("SELECT used_by FROM allowed_emails").fetchone()[0]
             self.assertEqual(c.execute("SELECT count(*) FROM audit_log WHERE action='auth.register'").fetchone()[0], 1)
-        self.assertEqual(name, f"racer{h.removeprefix('hash')}", "name and hash must belong to the same winner")
+        self.assertEqual(name, racer_name(int(h.removeprefix("hash"))), "name and hash must belong to the same winner")
         self.assertIsNotNone(used_by)
 
     def test_same_listed_email_10_processes_exactly_one_winner(self):

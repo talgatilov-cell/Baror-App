@@ -26,9 +26,10 @@ import datetime as dt
 from typing import Any, Callable
 
 from baror.errors import AuthError, NotFoundError
-from baror.storage import audit, db
+from baror.storage import accommodations, audit, db
+from baror.storage.summaries import fold_summary
 
-__all__ = ["MIN_GROUP", "overview", "list_platoon_members", "get_cadet_results"]
+__all__ = ["MIN_GROUP", "overview", "list_platoon_members", "platoon_summary", "get_cadet_results"]
 
 MIN_GROUP = 5   # suggested minimum from the research, not a legal standard (ADR-0001)
 _LEVELS = ("excellent", "pass", "fail")
@@ -168,8 +169,36 @@ def list_platoon_members(db_path, actor_id, platoon_id, *, now: dt.datetime | No
     return _run(db_path, actor_id, "chief.members", platoon_id, None, now, body)
 
 
+def platoon_summary(db_path, actor_id, platoon_id, *, now: dt.datetime | None = None) -> list[dict[str, Any]]:
+    """One entry per ACTIVE cadet of one platoon (``platoon_id=None``: the cadets without a platoon), by name: the same
+    shape as ``cohort.cohort_summary`` (raw latest/best values, gender, is_km, accommodations; no grading). Unknown
+    platoon -> NotFoundError. Audited with one ``chief.summary`` row PER CADET read (each disclosure is exact); an empty
+    platoon gets one platoon-level row."""
+    def body(c, actor, platoon, _cadet):
+        if platoon is not None:
+            if _id(platoon) is None or c.execute("SELECT 1 FROM platoons WHERE id=?", (platoon,)).fetchone() is None:
+                return None
+            where, args = "u.platoon_id=?", (platoon,)
+        else:
+            where, args = "u.platoon_id IS NULL", ()
+        rows = c.execute(
+            "SELECT u.id,u.name,u.gender,u.is_km,r.test_date,r.run_tenths,r.pushups FROM users u "
+            "LEFT JOIN results r ON r.pseudonym=u.pseudonym WHERE " + where + " AND u.role='cadet' AND u.active=1 "
+            "ORDER BY u.name, u.id, r.test_date DESC, r.id DESC", args).fetchall()     # `where` is one of two literals
+        out = fold_summary(c, rows)
+        if out:
+            for s in out:
+                audit.record(c, actor_id=actor, action="chief.summary", target_user_id=s["id"], platoon_id=_id(platoon), now=now)
+        else:
+            audit.record(c, actor_id=actor, action="chief.summary", platoon_id=_id(platoon), now=now)
+        return out or [None]
+    out = _run(db_path, actor_id, "chief.summary", platoon_id, None, now, body)
+    return [] if out == [None] else out
+
+
 def get_cadet_results(db_path, actor_id, cadet_id, *, now: dt.datetime | None = None) -> dict[str, Any]:
-    """{'cadet': {id,name,gender,is_km,platoon_id,platoon}, 'results': [{test_date,run_tenths,pushups}] newest first}
+    """{'cadet': {id,name,gender,is_km,platoon_id,platoon}, 'results': [{test_date,run_tenths,pushups}] newest first,
+    'accommodations': [...] newest first}
     for ONE active cadet of any platoon. Audited per call as ``chief.cadet`` with actor, target and platoon."""
     def body(c, actor, _platoon, cadet):
         t = c.execute("SELECT t.id,t.name,t.gender,t.is_km,t.platoon_id,t.pseudonym,p.name AS platoon FROM users t "
@@ -181,5 +210,6 @@ def get_cadet_results(db_path, actor_id, cadet_id, *, now: dt.datetime | None = 
                         "ORDER BY test_date DESC, id DESC", (t["pseudonym"],)).fetchall()
         audit.record(c, actor_id=actor, action="chief.cadet", target_user_id=t["id"], platoon_id=t["platoon_id"], now=now)
         return {"cadet": {k: t[k] for k in ("id", "name", "gender", "is_km", "platoon_id", "platoon")},
-                "results": [dict(r) for r in res]}
+                "results": [dict(r) for r in res],
+                "accommodations": accommodations.fetch_public(c, [t["id"]])[t["id"]]}
     return _run(db_path, actor_id, "chief.cadet", None, cadet_id, now, body)

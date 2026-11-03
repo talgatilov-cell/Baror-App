@@ -22,7 +22,8 @@ import datetime as dt
 from typing import Any
 
 from baror.errors import AuthError, NotFoundError
-from baror.storage import audit, db
+from baror.storage import accommodations, audit, db
+from baror.storage.summaries import fold_summary
 
 __all__ = ["my_platoons", "list_platoon_members", "cohort_summary", "get_cadet_results"]
 
@@ -100,7 +101,7 @@ def cohort_summary(db_path, actor_id, platoon_id, *, now: dt.datetime | None = N
 
     {id,name,gender,is_km,result_count,last_test_date,
      latest_run:{test_date,run_tenths}|None, latest_pushups:{test_date,pushups}|None,
-     best_run_tenths (lowest)|None, best_pushups (highest)|None}
+     best_run_tenths (lowest)|None, best_pushups (highest)|None, accommodations:[...]}
     'Latest' = newest test_date, ties by newest insertion. Audited with one row PER CADET read (so each cadet's
     disclosure is exact); a platoon with no cadets gets one platoon-level row.
     """
@@ -112,23 +113,7 @@ def cohort_summary(db_path, actor_id, platoon_id, *, now: dt.datetime | None = N
             f"LEFT JOIN results r ON r.pseudonym=u.pseudonym WHERE u.platoon_id=:platoon AND u.role='cadet' AND u.active=1 "
             f"AND {_GRANTED} ORDER BY u.name, u.id, r.test_date DESC, r.id DESC",
             {"actor": actor, "platoon": platoon}).fetchall()
-        by: dict[int, dict[str, Any]] = {}
-        for r in rows:  # rows arrive newest-first per cadet
-            s = by.setdefault(r["id"], {
-                "id": r["id"], "name": r["name"], "gender": r["gender"], "is_km": r["is_km"], "result_count": 0,
-                "last_test_date": None, "latest_run": None, "latest_pushups": None,
-                "best_run_tenths": None, "best_pushups": None})
-            if r["test_date"] is None:
-                continue
-            s["result_count"] += 1
-            s["last_test_date"] = s["last_test_date"] or r["test_date"]
-            if r["run_tenths"] is not None:
-                s["latest_run"] = s["latest_run"] or {"test_date": r["test_date"], "run_tenths": r["run_tenths"]}
-                s["best_run_tenths"] = r["run_tenths"] if s["best_run_tenths"] is None else min(s["best_run_tenths"], r["run_tenths"])
-            if r["pushups"] is not None:
-                s["latest_pushups"] = s["latest_pushups"] or {"test_date": r["test_date"], "pushups": r["pushups"]}
-                s["best_pushups"] = r["pushups"] if s["best_pushups"] is None else max(s["best_pushups"], r["pushups"])
-        out = list(by.values())
+        out = fold_summary(c, rows)
         if out:
             c.executemany("INSERT INTO audit_log(ts,actor_id,action,target_user_id,platoon_id) VALUES(?,?,?,?,?)",
                           [(audit.ts(now), actor, "cohort.summary", s["id"], platoon) for s in out])
@@ -139,7 +124,8 @@ def cohort_summary(db_path, actor_id, platoon_id, *, now: dt.datetime | None = N
 
 
 def get_cadet_results(db_path, actor_id, cadet_id, *, now: dt.datetime | None = None) -> dict[str, Any]:
-    """{'cadet': {id,name,gender,is_km}, 'results': [{test_date,run_tenths,pushups}] newest first}.
+    """{'cadet': {id,name,gender,is_km}, 'results': [{test_date,run_tenths,pushups}] newest first,
+    'accommodations': [...] newest first}.
     Authorised iff the cadet is an ACTIVE CADET whose CURRENT platoon the actor is granted. Audited per call."""
     def body(c, actor, _platoon, cadet):
         t = c.execute(
@@ -152,5 +138,6 @@ def get_cadet_results(db_path, actor_id, cadet_id, *, now: dt.datetime | None = 
         res = c.execute("SELECT test_date,run_tenths,pushups FROM results WHERE pseudonym=? "
                         "ORDER BY test_date DESC, id DESC", (t["pseudonym"],)).fetchall()
         audit.record(c, actor_id=actor, action="cohort.cadet", target_user_id=t["id"], platoon_id=t["platoon_id"], now=now)
-        return {"cadet": {k: t[k] for k in ("id", "name", "gender", "is_km")}, "results": [dict(r) for r in res]}
+        return {"cadet": {k: t[k] for k in ("id", "name", "gender", "is_km")}, "results": [dict(r) for r in res],
+                "accommodations": accommodations.fetch_public(c, [t["id"]])[t["id"]]}
     return _run(db_path, actor_id, "cohort.cadet", None, cadet_id, now, body)

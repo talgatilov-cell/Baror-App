@@ -33,7 +33,7 @@ class V4ToV5(unittest.TestCase):
             self.platoons = [tuple(r) for r in c.execute("SELECT id,name,created_at,course_end FROM platoons ORDER BY id")]
 
     def test_upgrade_keeps_every_row(self):
-        self.assertEqual(db.init_db(self.path), 5)
+        self.assertEqual(db.init_db(self.path), db.LATEST_VERSION)
         self.assertEqual(person_view(self.path), self.before)
         with db.reader(self.path) as c:
             self.assertEqual([tuple(r) for r in c.execute("SELECT id,name,created_at,course_end FROM platoons ORDER BY id")], self.platoons)
@@ -88,7 +88,7 @@ class V4ToV5(unittest.TestCase):
 
     def test_idempotent_and_fresh_database_has_the_same_shape(self):
         db.init_db(self.path)
-        self.assertEqual(db.init_db(self.path), 5)
+        self.assertEqual(db.init_db(self.path), db.LATEST_VERSION)
         fresh = os.path.join(self._tmp.name, "fresh.db")
         db.init_db(fresh)
 

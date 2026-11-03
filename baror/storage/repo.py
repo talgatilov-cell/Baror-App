@@ -18,10 +18,11 @@ from __future__ import annotations
 
 import datetime as _dt
 import secrets
+import unicodedata
 from typing import Any
 
 from baror.errors import ConflictError, NotFoundError, RegistrationDeniedError, ValidationError
-from baror.storage import audit, db
+from baror.storage import accommodations, audit, db
 
 GENDERS = ("M", "F")
 # The pseudonym of the user whose id is the (single) bound parameter. Never built from input.
@@ -70,6 +71,32 @@ def _check_profile(name: str, gender: str) -> None:
         raise ValidationError("INVALID_NAME", field="name", detail="name length")
 
 
+NAME_SEPARATORS = " -.'\u2019\u05f3\u05f4"     # space, hyphen, dot, apostrophes, geresh, gershayim
+
+
+def _name_letter(ch: str) -> bool:
+    """A Hebrew or Latin letter (accented Latin included). Digits, other scripts and symbols are not."""
+    if not ch.isalpha():
+        return False
+    unicode_name = unicodedata.name(ch, "")
+    return unicode_name.startswith(("HEBREW LETTER", "LATIN "))
+
+
+def check_display_name(name) -> str:
+    """The name a person types (registration, profile): Hebrew and Latin letters plus space, hyphen, dot, apostrophe,
+    geresh and gershayim, 1..80 characters, at least one letter. No digits, no markup characters (< > [ ] * : & ...), no
+    line breaks, control or direction-override characters. Returns the trimmed name; raises ValidationError("INVALID_NAME").
+    The trusted paths (``create_user``: migration, operator tooling) keep the length check only, so a legacy record is
+    never refused here; the screens show every name as plain text anyway."""
+    if not isinstance(name, str):
+        raise ValidationError("INVALID_NAME", field="name", detail="name is not text")
+    n = name.strip()
+    if not 1 <= len(n) <= 80 or not any(_name_letter(ch) for ch in n) or \
+            any(not (_name_letter(ch) or ch in NAME_SEPARATORS) for ch in n):
+        raise ValidationError("INVALID_NAME", field="name", detail="name: Hebrew/Latin letters and . - ' space only")
+    return n
+
+
 def create_user(db_path, *, email: str, name: str, gender: str, is_km: bool, pw_hash: str,
                 must_change_pw: bool = False, role: str = "cadet", platoon_id: int | None = None) -> int:
     """TRUSTED path: INSERT without consulting the allowlist (JSON migration, operator tooling, tests).
@@ -103,6 +130,7 @@ def register_with_allowlist(db_path, *, email: str, name: str, gender: str, is_k
     hashes the password first on every path, so the scrypt cost dominates and is identical.
     """
     _check_profile(name, gender)
+    name = check_display_name(name)            # before the allowlist is consulted: independent of list membership
     try:
         e = normalize_email(email)
     except ValidationError:
@@ -159,9 +187,7 @@ def update_profile(db_path, user_id: int, *, name: str | None = None, gender: st
                    is_km: bool | None = None) -> None:
     sets, args = [], []
     if name is not None:
-        if not 1 <= len(name.strip()) <= 80:
-            raise ValidationError("INVALID_NAME", field="name", detail="name length")
-        sets.append("name=?"); args.append(name.strip())
+        sets.append("name=?"); args.append(check_display_name(name))
     if gender is not None:
         if gender not in GENDERS:
             raise ValidationError("INVALID_GENDER", field="gender", detail=f"gender={gender!r}")
@@ -188,7 +214,7 @@ def set_password_hash(db_path, user_id: int, pw_hash: str, *, must_change_pw: bo
 
 
 def delete_user(db_path, user_id: int) -> None:
-    """ERASURE at the user's request: removes the account, its sessions AND its results.
+    """ERASURE at the user's request: removes the account, its sessions, its accommodations AND its results.
 
     Deleting the ``pseudonyms`` row cascades to ``users`` (and from there to sessions) and to ``results``. Deleting only
     the ``users`` row would be the retention path (see baror.storage.retention): results would stay, de-identified.
@@ -246,11 +272,14 @@ def find_duplicate(db_path, user_id: int, *, test_date: str, run_tenths: int | N
 
 
 def export_user_data(db_path, user_id: int) -> dict[str, Any]:
-    """Everything stored about one user, for the 'export my data' button. Never includes pw_hash."""
+    """Everything stored about one user, for the 'export my data' button (rendered as a PDF by baror.export_pdf).
+    Never includes pw_hash, ``created_by`` of an accommodation, or anything about another user except the display name of
+    whoever read the results."""
     user = get_user(db_path, user_id)
     if user is None:
         raise NotFoundError(detail=f"user {user_id}")
     with db.reader(db_path) as c:
         # Who read this person's results (cohort view). Date + reader name + count only; see audit.reads_of_user.
         accessed_by = audit.reads_of_user(c, user_id)
-    return {"user": user, "results": list_results(db_path, user_id), "accessed_by": accessed_by}
+    return {"user": user, "results": list_results(db_path, user_id), "accommodations": accommodations.list_own(db_path, user_id),
+            "accessed_by": accessed_by}

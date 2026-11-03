@@ -145,3 +145,20 @@ class ResultFunctions(DbCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DisplayName(unittest.TestCase):
+    """Names typed by a person: Hebrew and Latin letters plus space, hyphen, dot, apostrophe, geresh, gershayim."""
+
+    def test_accepts_ordinary_names(self):
+        for name in ("דנה כהן", "בר-אור", "ג׳ון", "צ״ל", "Dana Cohen", "Jean-Luc O'Neil", "O’Brien", "Åsa Müller",
+                     "אבי כ.", "  נועה  "):
+            self.assertEqual(repo.check_display_name(name), name.strip(), name)
+
+    def test_refuses_digits_markup_other_characters_and_control_characters(self):
+        bad = ["", "   ", "a" * 81, "בר <b>שחר</b>", "גל [x](http://e.example)", "אביב *כוכב*", "דור :smile:", "דנה1", "A&B",
+               "דנה\nכהן", "דנה\tכהן", "דנה\u202Eכהן", "דנה​כהן", "---", ".", "'", "dana@example.com", "Дана", "دنا",
+               None, 5, b"abc"]
+        for name in bad:
+            with self.assertRaises(ValidationError, msg=repr(name)):
+                repo.check_display_name(name)

@@ -360,10 +360,10 @@ class CreatingAChief(ChiefCase):
 
 
 class ModuleShape(unittest.TestCase):
-    def test_public_functions_are_the_three_reads(self):
+    def test_public_functions_are_the_four_reads(self):
         pub = sorted(n for n, f in inspect.getmembers(chief, inspect.isfunction)
                      if not n.startswith("_") and f.__module__ == chief.__name__)
-        self.assertEqual(pub, ["get_cadet_results", "list_platoon_members", "overview"])
+        self.assertEqual(pub, ["get_cadet_results", "list_platoon_members", "overview", "platoon_summary"])
 
     def test_source_has_no_write_statements(self):
         src = inspect.getsource(chief)

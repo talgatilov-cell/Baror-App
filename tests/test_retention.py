@@ -18,10 +18,10 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 D = dt.date
 # unique, searchable markers (ASCII and Hebrew) for "the link is still in the bytes"
-ADA = {"email": "ada.zq7x@example.com", "name": "עדה-צוערת-זק7"}     # a Hebrew name: checked as UTF-8 bytes
-BO = {"email": "bo.zq7x@example.com", "name": "Zqname-Bo-7X"}
-CY = {"email": "cy.zq7x@example.com", "name": "Zqname-Cy-7X"}
-DEE = {"email": "dee.zq7x@example.com", "name": "Zqname-Dee-7X"}
+ADA = {"email": "ada.zq7x@example.com", "name": "עדה-צוערת-זקא"}     # a Hebrew name: checked as UTF-8 bytes
+BO = {"email": "bo.zq7x@example.com", "name": "Zqname-Bo-Qx"}
+CY = {"email": "cy.zq7x@example.com", "name": "Zqname-Cy-Qx"}
+DEE = {"email": "dee.zq7x@example.com", "name": "Zqname-Dee-Qx"}
 PW = "correct horse battery"
 DUE_A = D(2026, 7, 31)      # platoon A course_end 2026-01-31 + 6 months
 DUE_B = D(2026, 11, 1)      # platoon B course_end 2026-05-01 + 6 months
@@ -60,7 +60,7 @@ class RetentionCase(V2Case):
         self.bo = self.register(BO, self.pa, "M")
         self.cy = self.cadet(CY["email"], self.pb, name=CY["name"])
         self.dee = self.cadet(DEE["email"], None, name=DEE["name"])           # no platoon -> unscheduled
-        self.ins = self.staff("ins.zq7x@example.com", "instructor", [self.pa], name="Zqname-Ins-7X")
+        self.ins = self.staff("ins.zq7x@example.com", "instructor", [self.pa], name="Zqname-Ins-Qx")
         for uid, n in ((self.ada, 3), (self.bo, 2), (self.cy, 2), (self.dee, 1)):
             for i in range(n):
                 repo.add_result(self.path, uid, test_date=f"2026-0{i + 1}-10", run_tenths=9000 + i, pushups=20 + i)

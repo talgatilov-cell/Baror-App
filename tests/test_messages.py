@@ -16,7 +16,8 @@ SLASH_GENDER = re.compile(r"[\u05d0-\u05ea]+[\u05d9]?/[\u05d0-\u05ea]")
 HE = re.compile(r"[\u0590-\u05ff]")
 EMOJI = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u200d]")
 SAMPLE = {"time": "05:00", "date": "12.10", "gap": "12 שניות", "wait": "30 שניות", "ok": 5, "total": 9,
-          "name": "דנה", "scale": "זכר", "gender": "נקבה", "n": 7, "lo": 1, "hi": 120, "test": "ריצה", "status": "הושג הרף"}
+          "name": "דנה", "scale": "זכר", "gender": "נקבה", "n": 7, "lo": 1, "hi": 120, "test": "ריצה", "status": "הושג הרף",
+          "v": "15:40", "email": "a@example.com", "count": 3, "platoon": "מחלקה 1", "reads": 2, "label": "ריצה", "min": 1, "max": 60, "first": "15:40", "last": "14:50", "best": "14:30", "summary": "ב-3 בחנים", "start": "01/10/2026", "end": "01/12/2026"}
 MAX_BTN = 18
 
 
@@ -26,14 +27,21 @@ def all_strings():
     for k, m in messages_he.ERRORS.items():
         for part in ("title", "why", "action"):
             yield f"ERRORS.{k}.{part}", getattr(m, part)
-    for name in ("TIPS_RUN", "TIPS_PUSHUPS", "VIDEOS"):
-        d = getattr(messages_he, name)
-        yield f"{name}.title", d["title"]
-        yield f"{name}.intro", d["intro"]
-        for i, (h, body) in enumerate(d["items"]):
-            yield f"{name}.{i}.head", h
-            if name != "VIDEOS":
-                yield f"{name}.{i}.body", body
+    for name in ("TIPS_RUN", "TIPS_PUSHUPS", "TIPS_WEEK", "VIDEOS"):
+        yield from _walk(name, getattr(messages_he, name))
+
+
+def _walk(prefix, obj):
+    """Every Hebrew string in a content dict (cards, bullets, table cells); icon names and URLs are not copy."""
+    if isinstance(obj, str):
+        yield prefix, obj
+    elif isinstance(obj, dict):
+        for k, v in obj.items():
+            if k not in ("icon", "url"):
+                yield from _walk(f"{prefix}.{k}", v)
+    elif isinstance(obj, (list, tuple)):
+        for i, v in enumerate(obj):
+            yield from _walk(f"{prefix}.{i}", v)
 
 
 def lint(strings=None):

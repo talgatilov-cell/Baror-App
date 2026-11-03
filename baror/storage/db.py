@@ -230,8 +230,36 @@ DROP TABLE platoons;
 ALTER TABLE platoons_v5 RENAME TO platoons
 """
 
+# Schema v6: accommodations (הקלות ופטורים), owner decision of 2026-11-03. One new table, nothing is rebuilt.
+# The table hangs off the USER (not the results pseudonym): a record describes a person and may be health related, so
+# it is deleted together with the account (erasure) and by the retention job (de-identification), while the results
+# stay under their pseudonym. ``source`` says who recorded it (a cadet cannot edit or delete it afterwards: that is
+# enforced in baror.storage.accommodations; the CHECKs here are the backstop for the values). Dates use the same
+# build-independent check as v5; the 3-year limit uses SQLite's date arithmetic. (No semicolons inside the script:
+# ``_split`` cuts on them.)
+SCHEMA_V6 = """
+CREATE TABLE accommodations(
+ id INTEGER PRIMARY KEY,
+ user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ kind TEXT NOT NULL CHECK(kind IN ('relief','exemption')),
+ scope TEXT NOT NULL CHECK(scope IN ('run','pushups','both')),
+ start_date TEXT NOT NULL CHECK(date(start_date) IS NOT NULL AND date(julianday(start_date))=start_date),
+ end_date TEXT NOT NULL CHECK(date(end_date) IS NOT NULL AND date(julianday(end_date))=end_date),
+ note TEXT CHECK(note IS NULL OR length(note) BETWEEN 1 AND 100),
+ source TEXT NOT NULL CHECK(source IN ('cadet','instructor','chief','admin')),
+ created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+ created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+ delete_requested_at TEXT,
+ delete_requested_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+ CHECK(end_date >= start_date),
+ CHECK(end_date <= date(start_date,'+3 years')),
+ CHECK(delete_requested_by IS NULL OR delete_requested_at IS NOT NULL));
+CREATE INDEX idx_accommodations_user ON accommodations(user_id);
+CREATE INDEX idx_accommodations_pending ON accommodations(delete_requested_at) WHERE delete_requested_at IS NOT NULL
+"""
+
 # user_version -> script that upgrades from (version-1). Append only; never edit a released entry.
-MIGRATIONS: dict[int, str] = {1: SCHEMA_V1, 2: SCHEMA_V2, 3: SCHEMA_V3, 4: SCHEMA_V4, 5: SCHEMA_V5}
+MIGRATIONS: dict[int, str] = {1: SCHEMA_V1, 2: SCHEMA_V2, 3: SCHEMA_V3, 4: SCHEMA_V4, 5: SCHEMA_V5, 6: SCHEMA_V6}
 LATEST_VERSION = max(MIGRATIONS)
 # Versions whose script rebuilds a table that other tables reference: run with foreign_keys=OFF + foreign_key_check.
 _FK_OFF_VERSIONS = frozenset({2, 3, 4, 5})
