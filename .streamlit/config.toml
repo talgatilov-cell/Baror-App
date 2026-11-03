@@ -1,0 +1,10 @@
+[client]
+toolbarMode = "minimal"
+showErrorDetails = "none"
+
+[server]
+enableStaticServing = true
+enableXsrfProtection = true
+
+[browser]
+gatherUsageStats = false

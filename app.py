@@ -165,7 +165,7 @@ if not st.session_state.logged_in:
 # --- 6. המערכת (אחרי התחברות) - ניווט ועמודים ---
 else:
     with st.sidebar:
-        st.image("logo.png", use_container_width=True)
+        st.image("logo.png", width="stretch")
         st.header("📌 ניווט פלוגתי")
 
         page = st.radio(
@@ -203,7 +203,7 @@ else:
                 fig1.update_traces(line_color='#4a5c40', marker=dict(size=10, color='#4a5c40'))
                 # הוספת רקע לבן ואטום יותר ספציפית לגרפים
                 fig1.update_layout(xaxis_title="תאריך", yaxis_title="דקות", plot_bgcolor='rgba(255,255,255,0.8)', paper_bgcolor='rgba(255,255,255,0.8)', margin=dict(l=0, r=0, t=10, b=0))
-                st.plotly_chart(fig1, use_container_width=True)
+                st.plotly_chart(fig1, width="stretch")
 
             with col_chart2:
                 st.markdown("<p style='text-align: center; font-weight: bold; color: #4a5c40;'>שכיבות סמיכה (גבוה = טוב)</p>", unsafe_allow_html=True)
@@ -211,7 +211,7 @@ else:
                 fig2.update_traces(line_color='#4a5c40', marker=dict(size=10, color='#4a5c40'))
                 # הוספת רקע לבן ואטום יותר ספציפית לגרפים
                 fig2.update_layout(xaxis_title="תאריך", yaxis_title="חזרות", plot_bgcolor='rgba(255,255,255,0.8)', paper_bgcolor='rgba(255,255,255,0.8)', margin=dict(l=0, r=0, t=10, b=0))
-                st.plotly_chart(fig2, use_container_width=True)
+                st.plotly_chart(fig2, width="stretch")
 
         st.divider()
         st.subheader("הזנת תוצאות בוחן חדש")
