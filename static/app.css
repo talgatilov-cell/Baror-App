@@ -240,9 +240,11 @@ button[data-variant="segmented_control"]{flex:1 1 0; min-width:0; min-height:var
   background:var(--bg); border-block-end:1px solid var(--line);
   padding:calc(.5rem + env(safe-area-inset-top)) 1rem .5rem}
 /* Streamlit's own header (empty with toolbarMode "minimal") sits above the bar at z-index 999990 and 60 px tall: let taps
-   through to the sign-out button. Anything it might hold (a developer toolbar) stays clickable. */
-[data-testid="stHeader"]{pointer-events:none}
-[data-testid="stHeader"] > *{pointer-events:auto}
+   through to the sign-out button and the bell. On Streamlit Community Cloud the header also holds a full-width toolbar
+   container (Share, star, GitHub): it must not catch taps either, so the whole subtree is click-through and only real
+   controls inside it (buttons, links) stay clickable. */
+[data-testid="stHeader"], [data-testid="stHeader"] *{pointer-events:none}
+[data-testid="stHeader"] button, [data-testid="stHeader"] a{pointer-events:auto}
 /* keyboard focus / scroll-into-view stops clear of both pinned bars (WCAG 2.4.11 focus not obscured): top bar 65 px,
    bottom bar 73 px, each plus its safe-area inset */
 .stApp:has(.st-key-top_bar) [data-testid="stMain"]{

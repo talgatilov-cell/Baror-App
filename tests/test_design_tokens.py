@@ -102,7 +102,11 @@ class PinnedBars(unittest.TestCase):
                                     r'\(safe-area-inset-top\)\) calc\(var\(--tap\) \+ 2\.5rem \+ env\(safe-area-inset-bottom\)\)')
 
     def test_streamlits_empty_header_does_not_swallow_taps_meant_for_the_bar(self):
-        self.assertIn('[data-testid="stHeader"]{pointer-events:none}', self.CODE)
+        # the header AND everything inside it (on Streamlit Cloud: a full-width toolbar container) is click-through;
+        # only real controls inside it stay clickable
+        self.assertIn('[data-testid="stHeader"], [data-testid="stHeader"] *{pointer-events:none}', self.CODE)
+        self.assertIn('[data-testid="stHeader"] button, [data-testid="stHeader"] a{pointer-events:auto}', self.CODE)
+        self.assertNotIn('[data-testid="stHeader"] > *{pointer-events:auto}', self.CODE)
 
 
 class Contrast(unittest.TestCase):

@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>בר-אור: הסבר קצר על האפליקציה</title>
+<style>
+  @page { size: A4; margin: 16mm 15mm 18mm;
+    @bottom-right { content: "בר-אור: הסבר קצר"; font: 8pt "DejaVu Sans"; color: #666; }
+    @bottom-left { content: "עמוד " counter(page) " מתוך " counter(pages); font: 8pt "DejaVu Sans"; color: #666; } }
+  :root { --olive: #43563a; --beige: #f1ecd9; --gold: #b8892a; --line: #d9d3bd; }
+  * { box-sizing: border-box; }
+  body { font-family: "DejaVu Sans", sans-serif; font-size: 9.6pt; line-height: 1.5; color: #222; margin: 0; }
+  .page { break-after: page; }
+  .page:last-child { break-after: auto; }
+  header { display: flex; align-items: center; gap: 12px; border-block-end: 2px solid var(--olive); padding-block-end: 8px; margin-block-end: 14px; }
+  header img { width: 42px; height: 42px; }
+  header h1 { margin: 0; font-size: 24pt; line-height: 1.1; color: var(--olive); }
+  header p { margin: 2px 0 0; color: #555; font-size: 10pt; }
+  h2 { font-size: 13.5pt; color: var(--olive); margin: 16px 0 7px; display: flex; align-items: center; gap: 8px; }
+  h2 .n { background: var(--olive); color: #fff; border-radius: 50%; width: 21px; height: 21px; font-size: 10pt;
+          display: inline-flex; align-items: center; justify-content: center; flex: none; }
+  p { margin: 0 0 7px; }
+  .lead { background: var(--beige); border-inline-start: 4px solid var(--olive); border-radius: 4px; padding: 8px 12px; }
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; margin: 9px 0; }
+  .card { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; break-inside: avoid; }
+  .card b { display: block; color: var(--olive); margin-block-end: 2px; }
+  .card.top { border-block-start: 3px solid var(--gold); }
+  .step { display: flex; gap: 9px; border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; margin-block-end: 6px; break-inside: avoid; }
+  .step .k { background: var(--olive); color: #fff; border-radius: 50%; width: 19px; height: 19px; font-size: 9pt; flex: none;
+             display: inline-flex; align-items: center; justify-content: center; margin-block-start: 2px; }
+  .flow { display: flex; align-items: stretch; gap: 6px; margin-block: 8px; }
+  .flow div { flex: 1; background: var(--beige); border: 1px solid var(--line); border-radius: 5px; padding: 7px 9px; font-size: 10pt; }
+  .flow span { align-self: center; color: var(--olive); font-weight: 700; }
+  table { width: 100%; border-collapse: collapse; margin-block: 6px 9px; font-size: 9.8pt; }
+  th { background: var(--olive); color: #fff; text-align: start; padding: 6px 9px; }
+  td { padding: 6px 9px; vertical-align: top; border-block-end: 1px solid var(--line); }
+  tr:nth-child(even) td { background: #faf8ef; }
+  td:first-child { font-weight: 700; white-space: nowrap; }
+  ul { margin: 3px 0 0; padding-inline-start: 17px; }
+  li { margin-block-end: 3px; }
+  .status { background: #fbf1d6; border: 1px solid #e3cf8f; border-radius: 6px; padding: 8px 12px; margin-block-start: 12px; break-inside: avoid; }
+  .small { font-size: 9.5pt; color: #444; }
+</style>
+</head>
+<body>
+
+<!-- ===================== page 1 ===================== -->
+<section class="page">
+<header>
+  <img src="../static/logo.png" alt="">
+  <div><h1>בר-אור</h1><p>הסבר קצר על האפליקציה, בלי מילים טכניות</p></div>
+</header>
+
+<h2><span class="n">1</span> מה זו בר-אור ולמה היא קיימת</h2>
+<p class="lead">בר-אור היא אפליקציה לצוערי קורס קצינים. הצוערים מתעדים בה את תוצאות הכושר שלהם ורואים אם הם מתקדמים. המפקדים מקבלים תמונה ברורה של המחלקה ושל הקורס, במקום לאסוף תוצאות בנפרד מכל צוער.</p>
+<p>האפליקציה נפתחת בדפדפן של הטלפון, בלי התקנה, וכתובה בעברית מימין לשמאל. היא עוסקת בשני בוחנים בלבד: ריצת 3 ק"מ ושכיבות סמיכה.</p>
+<div class="cards">
+  <div class="card top"><b>הרף נקבע לפי מגדר</b>כל צוער מושווה לרף שמתאים לו, והרף שנקבע לא משתנה מתוך האפליקציה.</div>
+  <div class="card top"><b>כל בוחן נבדק לחוד</b>אין ציון כולל. הריצה והשכיבות מדורגות כל אחת בנפרד.</div>
+  <div class="card top"><b>הליכה במקום ריצה</b>לצוער שקיבל פטור מריצה היעד הוא הליכה של 6 ק"מ.</div>
+</div>
+
+<h2><span class="n">2</span> איך זה עובד, מסך אחרי מסך (מבט של צוער)</h2>
+<div class="step"><span class="k">1</span><div><b>הרשמה וכניסה.</b> ההרשמה פתוחה: כל אחד נרשם בעצמו כצוער ובוחר מחלקה (אפשר לבחור "עוד לא ידוע"). אפשר גם להיכנס מקישור הצטרפות של המחלקה. אחרי הכניסה המכשיר נשאר מחובר כשבועיים, וביציאה החיבור מתבטל.</div></div>
+<div class="step"><span class="k">2</span><div><b>מסך הסיכום.</b> מראה בפשטות איפה הצוער עומד מול הרף בכל בוחן, ואם הוא מתקדם. התוצאה מסומנת כ"הושג הרף" או כהצטיינות.</div></div>
+<div class="step"><span class="k">3</span><div><b>הוספת תוצאה.</b> בוחרים תאריך, מזינים את זמן הריצה (או ההליכה) ואת מספר שכיבות הסמיכה, ושומרים. הטופס בנוי לשימוש בבוהן אחת על הטלפון.</div></div>
+<div class="step"><span class="k">4</span><div><b>היסטוריה וגרפים.</b> כל התוצאות הקודמות בסדר זמנים, עם גרף שמראה אם יש שיפור לאורך הקורס.</div></div>
+<div class="step"><span class="k">5</span><div><b>עוד.</b> טיפים וסרטוני אימון, בקשת הקלה או פטור, פרטי הפרופיל (כולל בחירת מחלקה, פעם אחת, למי שנרשם בלי מחלקה), הורדת כל המידע האישי כקובץ PDF, ומחיקת החשבון.</div></div>
+
+<h2><span class="n">3</span> הקלה או פטור: מי מחליט</h2>
+<p>צוער שזקוק להקלה או לפטור (למשל בגלל פציעה) מגיש בקשה באפליקציה. עד שראש הקורס מחליט, הבקשה ממתינה ואינה משפיעה על שום דבר.</p>
+<div class="flow"><div>הצוער מגיש בקשה</div><span>←</span><div>הבקשה ממתינה</div><span>←</span><div>ראש הקורס מאשר או דוחה</div><span>←</span><div>רק בקשה מאושרת נחשבת. ההחלטה סופית</div></div>
+</section>
+
+<!-- ===================== page 2 ===================== -->
+<section class="page">
+<header>
+  <img src="../static/logo.png" alt="">
+  <div><h1>תפקידים ומסכים</h1><p>לכל תפקיד יש מסך משלו, והגישה לנתונים מוגבלת לפי הצורך</p></div>
+</header>
+
+<h2><span class="n">4</span> מי רואה מה</h2>
+<table>
+  <tr><th>תפקיד</th><th>מה רואה</th><th>מה עושה</th></tr>
+  <tr><td>צוער</td><td>את התוצאות וההתקדמות של עצמו בלבד.</td><td>מזין תוצאות, מגיש בקשות הקלה ופטור, מוריד את המידע שלו, מוחק את החשבון.</td></tr>
+  <tr><td>מדריך<br><span class="small">(מ"מ או מ"כ)</span></td><td>את המחלקה האחת שלו בלבד. בכרטיסים מופיעים רק שמות. התוצאות של צוער נפתחות בלחיצה על שמו.</td><td>קורא בלבד. מוסיף צוער רשום לפי כתובת, ומבקש עריכה, העברה או הסרה (הפיקוד מחליט). מ"מ גם מציע מ"כים למחלקה (עד חמישה) ויוצר קישור הצטרפות.</td></tr>
+  <tr><td>ראש הקורס וסגנו<br><span class="small">(מ"פ וסמ"פ)</span></td><td>שלושה עמודים: <b>סיכום פיקודי</b> (לוח בקרה של כל הקורס ותוצאות לפי מחלקה, ופרטי צוערים בשמם כשצריך), <b>בקשות</b>, ו<b>עוד</b> (דוחות, חשבונות, טיפים ופרופיל).</td><td>מאשרים או דוחים בקשות, מעניקים תפקיד מדריך לחשבון רשום, מעבירים ועורכים צוערים, ומקבלים דוחות מצטברים.</td></tr>
+  <tr><td>מנהל מערכת</td><td>שני עמודים: ניהול הרשאות וצוערים, ובקשות. אינו רואה את לוח הבקרה, מסך מחלקה או תוצאות.</td><td>בדיוק שניים, ונוצרים רק בכלי של מפעיל השרת. מעניקים תפקידים, מעבירים ועורכים צוערים, פותחים מחלקות ומשחררים כתובת דואר.</td></tr>
+</table>
+
+<h2><span class="n">5</span> בקשות והתראות לפיקוד</h2>
+<p>בסרגל העליון של ראש הקורס ושל מנהל המערכת יש פעמון עם מספר. לחיצה על פריט בו מובילה ישר לעמוד הבקשות ופותחת את הקבוצה הנכונה: בקשות הקלה או פטור, בקשות מחיקה של הקלה, ובקשות לשינוי צוערים (העברה בין מחלקות, עריכת פרטים, הסרה מהמחלקה והצעת מ"כ). כל כרטיס אומר בפשטות מה מבקשים, מה השתנה ("לפני ← אחרי"), מי הגיש, ומה יקרה באישור. כל החלטה נרשמת, ואישור מינוי מ"כ דורש לסמן שהזהות אומתה מחוץ לאפליקציה.</p>
+
+<h2><span class="n">6</span> דוחות מצטברים</h2>
+<p>ראש הקורס מקבל דוחות PDF בלי שמות: שבועי (כל יום חמישי) וחודשי (ביום האחרון של החודש), ואפשר גם להפיק לפי דרישה דוח של 30 הימים האחרונים או דוח לטווח תאריכים שבחרתם, עד חמישה חודשים. קבוצות של פחות מחמישה צוערים לא מוצגות כמספרים, ואין סיכום של "כולם".</p>
+</section>
+
+<!-- ===================== page 3 ===================== -->
+<section class="page">
+<header>
+  <img src="../static/logo.png" alt="">
+  <div><h1>פרטיות והרשאות</h1><p>מה נשמר, מי רואה, ומה עדיין פתוח</p></div>
+</header>
+
+<h2><span class="n">7</span> פרטיות, הרשאות ואחסון נתונים</h2>
+<div class="cards">
+  <div class="card top"><b>פרטיות</b><ul>
+    <li>הסיסמה נשמרת בצורה שאי אפשר לקרוא ממנה את הסיסמה עצמה.</li>
+    <li>כל מי שרואה צוער בשמו מתועד ביומן.</li>
+    <li>קבוצות קטנות מחמישה לא מוצגות כמספרים.</li>
+    <li>בקשת הקלה או פטור כוללת הערה קצרה. מומלץ לא לכתוב בה פרטים רפואיים.</li>
+  </ul></div>
+  <div class="card top"><b>הרשאות</b><ul>
+    <li>כל נרשם הוא צוער. תפקיד פיקוד ניתן רק לחשבון שכבר נרשם, בידי מנהל מערכת או ראש הקורס, אחרי שהזהות אומתה מחוץ לאפליקציה.</li>
+    <li>מדריך שייך למחלקה אחת ורואה רק אותה.</li>
+    <li>בקשות של מדריכים לשינוי צוער עוברות אישור של הפיקוד.</li>
+    <li>צוער רואה רק את עצמו.</li>
+  </ul></div>
+  <div class="card top"><b>אחסון נתונים</b><ul>
+    <li>כל הנתונים נשמרים בקובץ אחד בשרת. מומלץ לגבות אותו מדי יום.</li>
+    <li>חצי שנה אחרי סיום הקורס נמחקים השם, הדואר והסיסמה. התוצאות נשארות בלי שם.</li>
+    <li>צוער יכול להוריד את כל המידע שלו או למחוק את החשבון, ואז התוצאות נמחקות גם הן.</li>
+    <li>שליחת הדוחות בדואר אלקטרוני כבויה כברירת מחדל. דוח שנשלח בדואר יוצא מהמערכת, והדואר אינו מוצפן מקצה לקצה.</li>
+  </ul></div>
+</div>
+
+<h2><span class="n">8</span> הגנה מפני שימוש לרעה</h2>
+<p>ההרשמה פתוחה, ולכן יש מגבלות: טופס עם מלכודת לבוטים וזמן מילוי מינימלי, הגבלת ניסיונות הרשמה והתחברות לפי כתובת ולכל האפליקציה, תקרה של 120 הרשמות חדשות בשעה, ומתג חירום שסוגר את ההרשמה. מכיוון שאין אימות כתובת דואר, מישהו יכול להירשם עם כתובת של אחר. לכן אף תפקיד פיקוד לא ניתן אוטומטית: כל הענקה דורשת אימות זהות של האדם מחוץ לאפליקציה.</p>
+
+<div class="status"><b>מצב נוכחי:</b> זו גרסת הדגמה. הקוד עבר בדיקות אוטומטיות (1,343 בדיקות) ובדיקת אבטחה ובדיקת קוד, ללא ממצאים חמורים. עדיין לא נבדקו על טלפון אמיתי, בתמונת Docker ובשליחת דואר אמיתית. נוסח הפרטיות הסופי ממתין לאישור הממונה על הפרטיות ובעל הפרויקט, ומיקום השרת טרם נקבע. עד אז אין להזין בה נתוני צוערים אמיתיים.</div>
+</section>
+
+</body>
+</html>
