@@ -4,6 +4,7 @@ import datetime as dt
 import unittest
 
 from baror.domain import reports as r
+from baror.errors import ValidationError
 
 D = dt.date
 
@@ -103,6 +104,95 @@ class Monthly(unittest.TestCase):
             r.reports_due(dt.datetime(2026, 11, 5, 8, 0))
         with self.assertRaises(ValueError):
             r.reports_due("2026-11-05")
+
+
+class Trailing(unittest.TestCase):
+    def test_last_30_days_ends_today_and_starts_30_days_back(self):
+        self.assertEqual(r.trailing_period(D(2026, 11, 4)), (D(2026, 10, 5), D(2026, 11, 4)))
+        start, end = r.trailing_period(D(2026, 3, 1))
+        self.assertEqual((start, end), (D(2026, 1, 30), D(2026, 3, 1)))       # across February
+        self.assertEqual(r.trailing_period(D(2028, 3, 1))[0], D(2028, 1, 31))  # leap year
+        self.assertEqual((end - start).days, 30)
+
+    def test_previous_is_the_same_length_immediately_before(self):
+        for kind in ("trailing", "range"):
+            self.assertEqual(r.previous_period(kind, D(2026, 10, 5), D(2026, 11, 4)), (D(2026, 9, 4), D(2026, 10, 4)))
+            ps, pe = r.previous_period(kind, D(2026, 2, 1), D(2026, 2, 28))
+            self.assertEqual((ps, pe), (D(2026, 1, 4), D(2026, 1, 31)))
+            self.assertEqual(r.previous_period(kind, D(2026, 5, 7), D(2026, 5, 7)), (D(2026, 5, 6), D(2026, 5, 6)))
+        with self.assertRaises(ValueError):
+            r.previous_period("range", D(2026, 5, 7), D(2026, 5, 6))
+
+    def test_the_stored_kinds_are_unchanged(self):
+        self.assertEqual(r.KINDS, ("weekly", "monthly"))
+        self.assertEqual(r.ADHOC_KINDS, ("trailing", "range"))
+
+    def test_bad_input(self):
+        for bad in (dt.datetime(2026, 11, 4, 8), "2026-11-04", None):
+            with self.assertRaises(ValidationError) as cm:
+                r.trailing_period(bad)
+            self.assertEqual(cm.exception.message_key, "INVALID_DATE")
+
+
+class RangeValidation(unittest.TestCase):
+    TODAY = D(2026, 11, 4)
+
+    def key(self, start, end, today=None):
+        with self.assertRaises(ValidationError) as cm:
+            r.validate_range(start, end, today or self.TODAY)
+        return cm.exception.message_key
+
+    def test_a_good_range_is_returned(self):
+        self.assertEqual(r.validate_range(D(2026, 9, 1), D(2026, 11, 4), self.TODAY), (D(2026, 9, 1), D(2026, 11, 4)))
+        self.assertEqual(r.validate_range(D(2026, 11, 4), D(2026, 11, 4), self.TODAY), (D(2026, 11, 4), D(2026, 11, 4)))
+
+    def test_start_after_end(self):
+        self.assertEqual(self.key(D(2026, 11, 3), D(2026, 11, 2)), "REPORT_RANGE_ORDER")
+
+    def test_future_end(self):
+        self.assertEqual(self.key(D(2026, 11, 1), D(2026, 11, 5)), "REPORT_RANGE_FUTURE")
+        self.assertEqual(self.key(D(2026, 11, 9), D(2026, 11, 5)), "REPORT_RANGE_ORDER", "order is checked first")
+
+    def test_five_calendar_months_exactly_is_allowed_and_one_day_more_is_not(self):
+        today = D(2030, 1, 1)
+        for start, last in ((D(2026, 1, 1), D(2026, 5, 31)), (D(2026, 3, 1), D(2026, 7, 31)),
+                            (D(2026, 1, 31), D(2026, 6, 29)),          # 31 Jan + 5 months clamps to 30 Jun, less a day
+                            (D(2026, 8, 31), D(2027, 1, 30)),          # 31 Aug + 5 months clamps to 31 Jan, less a day
+                            (D(2026, 10, 15), D(2027, 3, 14)),         # across the year
+                            (D(2028, 2, 29), D(2028, 7, 28)),          # leap day
+                            (D(2026, 9, 30), D(2027, 2, 27)),          # 30 Sep + 5 months clamps to 28 Feb, less a day
+                            (D(2026, 12, 31), D(2027, 5, 30))):
+            self.assertEqual(r.last_allowed_end(start), last, start)
+            self.assertEqual(r.validate_range(start, last, today), (start, last))
+            self.assertEqual(self.key(start, last + dt.timedelta(days=1), today), "REPORT_RANGE_TOO_LONG", start)
+
+    def test_boundaries_hold_for_every_start_day_of_two_years(self):
+        today = D(2040, 1, 1)
+        day = D(2027, 1, 1)
+        while day < D(2029, 1, 1):
+            last = r.last_allowed_end(day)
+            self.assertEqual(r.validate_range(day, last, today), (day, last))
+            with self.assertRaises(ValidationError):
+                r.validate_range(day, last + dt.timedelta(days=1), today)
+            self.assertGreaterEqual((last - day).days, 150 - 1 - 3)         # between 5*28-1 and 5*31 days
+            self.assertLessEqual((last - day).days, 5 * 31 - 1)
+            day += dt.timedelta(days=1)
+
+    def test_too_long_is_reported_before_future_only_when_the_end_is_not_future(self):
+        self.assertEqual(self.key(D(2026, 1, 1), D(2026, 11, 4)), "REPORT_RANGE_TOO_LONG")
+        self.assertEqual(self.key(D(2026, 1, 1), D(2026, 11, 5)), "REPORT_RANGE_FUTURE")
+
+    def test_not_dates(self):
+        for bad in ("2026-11-01", None, dt.datetime(2026, 11, 1, 1)):
+            with self.assertRaises(ValidationError) as cm:
+                r.validate_range(bad, D(2026, 11, 2), self.TODAY)
+            self.assertEqual(cm.exception.message_key, "INVALID_DATE")
+
+    def test_add_months_clamps(self):
+        self.assertEqual(r.add_months(D(2026, 1, 31), 1), D(2026, 2, 28))
+        self.assertEqual(r.add_months(D(2028, 1, 31), 1), D(2028, 2, 29))
+        self.assertEqual(r.add_months(D(2026, 11, 15), 3), D(2027, 2, 15))
+        self.assertEqual(r.add_months(D(2026, 12, 1), 1), D(2027, 1, 1))
 
 
 if __name__ == "__main__":

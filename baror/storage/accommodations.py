@@ -1,9 +1,9 @@
 """Accommodations (הקלות ופטורים). Stdlib only; never imports streamlit.
 
 WHO MAY DO WHAT (owner decision of 2026-11-03; enforced HERE, per call, from the database, never from the caller):
-* add      a cadet for THEMSELVES (source 'cadet'); an instructor or admin for an active cadet of a platoon they are
-           granted (source 'instructor' / 'admin'; an admin has no implicit access, only explicit grants, exactly as in
-           ``baror.storage.cohort``); the chief for any active cadet (source 'chief').
+* add      a cadet for THEMSELVES (source 'cadet'); an instructor for an active cadet of their own platoon (source
+           'instructor', exactly as in ``baror.storage.cohort``; since schema v9 an admin has no accommodation rights);
+           the chief for any active cadet (source 'chief').
 * approve  APPROVAL STEP (owner request of 2026-11-03): a record whose source is 'cadet' starts 'pending'; records of an
            instructor, admin or the chief start 'approved' (the chief's are auto-approved). Only the CHIEF decides a
            pending record: ``approve_request`` makes it 'approved', ``reject_request`` makes it 'rejected' (the row is
@@ -13,7 +13,7 @@ WHO MAY DO WHAT (owner decision of 2026-11-03; enforced HERE, per call, from the
            ``pending_requests`` lists the pending records for the chief. Deletion requests (below) are a separate thing.
 * change   NOBODY. There is no update function for the content of a record (only the approval decision and the
            deletion-request flags ever change). A cadet can never edit or delete a record, not even their own.
-* delete   an instructor/admin may only REQUEST deletion (record of a cadet in a granted platoon); the chief APPROVES
+* delete   an instructor may only REQUEST deletion (record of a cadet in the own platoon); the chief APPROVES
            (the row is deleted) or REJECTS (the request is cleared), or deletes directly with ``approve_delete`` (works
            with or without a pending request). Nobody else; an operator can through ``baror.storage.ops``.
 * read     the data subject with ``list_own``; staff through the cohort/chief reads, which call ``fetch_public`` on the
@@ -41,8 +41,8 @@ __all__ = ["add", "list_own", "request_delete", "approve_delete", "reject_delete
 _PUBLIC = ("id", "kind", "scope", "start_date", "end_date", "note", "source", "approval", "created_at")
 _SELECT_PUBLIC = ("SELECT id, user_id, kind, scope, start_date, end_date, note, source, approval, created_at, "
                   "delete_requested_at IS NOT NULL AS delete_requested FROM accommodations")
-_STAFF = "('instructor','admin')"
-# True when :actor is an active instructor/admin granted the platoon of the cadet :cadet (same predicate as cohort.py)
+_STAFF = "('instructor')"       # schema v9: an admin has no accommodation rights
+# True when :actor is an active instructor whose platoon is the platoon of the cadet :cadet (same predicate as cohort.py)
 _GRANTED_FOR_CADET = ("EXISTS (SELECT 1 FROM users t JOIN users a ON a.id=:actor JOIN instructor_platoons ip "
                       f"ON ip.instructor_id=a.id AND ip.platoon_id=t.platoon_id WHERE t.id=:cadet AND t.role='cadet' "
                       f"AND t.active=1 AND a.active=1 AND a.role IN {_STAFF})")
@@ -127,7 +127,7 @@ def add(db_path, actor_id, cadet_id, *, kind, scope, start_date, end_date, note=
             if cadet != a["id"]:
                 raise AuthError("NOT_AUTHORISED", detail="a cadet may record only their own accommodations")
             source = "cadet"
-        elif a["role"] in ("instructor", "admin"):
+        elif a["role"] == "instructor":
             if cadet is None or not c.execute(f"SELECT {_GRANTED_FOR_CADET}", {"actor": a["id"], "cadet": cadet}).fetchone()[0]:
                 return None
             source = a["role"]
@@ -159,13 +159,13 @@ def _record_owner(c, accommodation_id):
 
 
 def request_delete(db_path, actor_id, accommodation_id, *, now: dt.datetime | None = None) -> None:
-    """Instructor/admin: ask for the deletion of a record of a cadet in a granted platoon. Idempotent (a second request
+    """Instructor: ask for the deletion of a record of a cadet in the own platoon. Idempotent (a second request
     keeps the first one's time and requester). Nothing is deleted: the chief decides."""
     rid = _id(accommodation_id)
 
     def body(c, a, _cadet):
-        if a["role"] not in ("instructor", "admin"):
-            raise AuthError("NOT_AUTHORISED", detail="only an instructor or admin may request a deletion")
+        if a["role"] != "instructor":
+            raise AuthError("NOT_AUTHORISED", detail="only an instructor may request a deletion")
         rec = _record_owner(c, rid) if rid else None
         if rec is None or not c.execute(f"SELECT {_GRANTED_FOR_CADET}", {"actor": a["id"], "cadet": rec["cadet"]}).fetchone()[0]:
             return None

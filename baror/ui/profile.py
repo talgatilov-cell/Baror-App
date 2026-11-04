@@ -18,8 +18,9 @@ from baror import export_pdf
 from baror.errors import BarorError
 from baror.logging_setup import log_event
 from baror.messages_he import render_exception, t
-from baror.storage import repo
-from baror.ui import session
+from baror.storage import repo, signup
+from baror.ui import accom, accounts_panel, session
+from baror.ui.components import iso
 from baror.ui.text import esc  # noqa: F401  (kept for symmetry with the other screens)
 
 
@@ -60,9 +61,46 @@ def _delete_account_dialog(cfg: Config, user: dict) -> None:
     session.sign_out_view("account_deleted")
 
 
+def _own_registration_text(cfg: Config, user: dict) -> str:
+    """The registration time as the accounts table shows it (the grant procedure compares the two)."""
+    row = repo.get_user(cfg.db_path, user["id"])
+    return accounts_panel.registered_text(row["created_at"], cfg.tz) if row else ""
+
+
+def platoon_block(cfg: Config, user: dict) -> None:
+    """A cadet WITHOUT a platoon picks one, once (``repo.set_own_platoon`` refuses when one is already set); after that
+    only staff move the cadet. Shown only while ``platoon_id`` is empty."""
+    with st.container(border=True, key="profile_platoon"):
+        st.markdown(f"**{t('profile_platoon_title')}**")
+        st.caption(t("profile_platoon_note"))
+        platoons = {p["id"]: p["name"] for p in signup.public_platoons(cfg.db_path)}
+        if not platoons:
+            st.caption(t("profile_platoon_none"))
+            return
+        pid = st.selectbox(t("profile_platoon_pick"), list(platoons), index=None, key="profile_platoon_pick",
+                           format_func=platoons.get, placeholder=t("choose_placeholder"), filter_mode=None)
+        if not st.button(t("btn_profile_platoon"), key="profile_platoon_save", width="stretch", icon=":material/save:"):
+            return
+        if pid is None:
+            st.warning(t("profile_platoon_choose"))
+            return
+        try:
+            repo.set_own_platoon(cfg.db_path, user["id"], pid)
+        except BarorError as exc:
+            st.error(render_exception(exc), icon=":material/error:")
+            return
+        log_event("platoon_chosen", user_id=user["id"])
+        st.session_state["_notice"] = t("profile_platoon_saved")
+        st.rerun()
+
+
 def render(cfg: Config, user: dict) -> None:
     st.subheader(t("profile_title"))
+    accom.take_notice()
     st.text(user["name"])
+    st.caption(iso(t("profile_registered", date=_own_registration_text(cfg, user))))
+    if user["role"] == "cadet" and user.get("platoon_id") is None:
+        platoon_block(cfg, user)
     if cfg.cohort_views and user["role"] == "cadet":
         with st.container(key="cadet_notice"):
             st.write(t("cadet_view_notice"))

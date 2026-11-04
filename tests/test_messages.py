@@ -17,7 +17,7 @@ HE = re.compile(r"[\u0590-\u05ff]")
 EMOJI = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u200d]")
 SAMPLE = {"time": "05:00", "date": "12.10", "gap": "12 שניות", "wait": "30 שניות", "ok": 5, "total": 9,
           "name": "דנה", "scale": "זכר", "gender": "נקבה", "n": 7, "lo": 1, "hi": 120, "test": "ריצה", "status": "הושג הרף",
-          "v": "15:40", "email": "a@example.com", "count": 3, "platoon": "מחלקה 1", "reads": 2, "label": "ריצה", "min": 1, "max": 60, "first": "15:40", "last": "14:50", "best": "14:30", "summary": "ב-3 בחנים", "start": "01/10/2026", "end": "01/12/2026"}
+          "v": "15:40", "email": "a@example.com", "count": 3, "platoon": "מחלקה 1", "reads": 2, "label": "ריצה", "min": 1, "max": 60, "first": "15:40", "last": "14:50", "best": "14:30", "summary": "ב-3 בחנים", "start": "01/10/2026", "end": "01/12/2026", "old": "מחלקה 1", "new": "מחלקה 2", "title": "מ״מ"}
 MAX_BTN = 18
 
 
@@ -112,6 +112,44 @@ class Lint(unittest.TestCase):
         self.assertIn("שתי דקות", messages_he.render_exception(RateLimitedError(params={"seconds": 61})))
         self.assertTrue(messages_he.render_exception(ValidationError("TIME_OUT_OF_RANGE")))   # missing params: no KeyError
         self.assertIn("abc123", messages_he.render_exception(ValidationError("INVALID_INPUT"), "abc123"))
+
+
+class V9Terms(unittest.TestCase):
+    """The company structure has fixed words: role = תפקיד, title = תואר, written with the Hebrew abbreviation mark."""
+
+    ABBREVIATION = re.compile(r"(?:סמ|מ)[\"'”’׳]+[פמכ]")
+
+    def test_titles_and_roles_have_names_and_use_the_abbreviation_mark(self):
+        from baror.domain import roles
+        m = messages_he.M
+        self.assertEqual([m["title_" + t_] for t_ in ("mp", "smp", "mm", "cmdr")], ["מ״פ", "סמ״פ", "מ״מ", "מ״כ"])
+        for title in roles.ALL_TITLES:
+            self.assertIn("title_" + title, m)
+        for role in roles.ROLES:
+            self.assertIn("role_" + role, m)
+        self.assertEqual(sorted(m["role_" + r] for r in roles.ROLES), sorted(["צוער", "מדריך", "ראש הקורס", "מנהל מערכת"]))
+
+    def test_no_string_spells_an_abbreviation_with_a_straight_quote_or_apostrophe(self):
+        bad = [k for k, v in all_strings() if self.ABBREVIATION.search(v)]
+        self.assertEqual(bad, [])
+
+    def test_the_title_errors_say_title_not_role(self):
+        for key in ("TITLE_REQUIRED", "TITLE_TAKEN"):
+            m = messages_he.ERRORS[key]
+            text = " ".join((m.title, m.why, m.action))
+            self.assertIn("תואר", text, key)
+            self.assertNotIn("תפקיד", text, key)
+
+    def test_every_v9_error_key_the_storage_raises_has_its_own_message(self):
+        keys = {"ROLE_NOT_ALLOWED", "CHIEF_LIMIT", "TITLE_REQUIRED", "TITLE_TAKEN", "MM_TAKEN", "CMDR_LIMIT", "PLATOON_REQUIRED",
+                "REQUEST_LIMIT", "CADET_NOT_REGISTERED", "ACCOUNT_CHANGED", "PLATOON_ALREADY_SET", "ADMIN_LIMIT", "LAST_ADMIN",
+                "SIGNUP_BUSY", "REGISTRATION_CLOSED", "REPORT_RANGE_ORDER", "REPORT_RANGE_FUTURE", "REPORT_RANGE_TOO_LONG"}
+        self.assertEqual({k for k in keys if k not in messages_he.ERRORS}, set())
+
+    def test_grant_dialogs_ask_for_the_same_identity_check_in_the_same_words(self):
+        m = messages_he.M
+        self.assertEqual(m["adm_verified"], "הזהות אומתה מחוץ למערכת")
+        self.assertEqual(m["grant_verified"], m["adm_verified"])
 
 
 class Plural(unittest.TestCase):

@@ -179,6 +179,21 @@ button[data-variant="segmented_control"]{flex:1 1 0; min-width:0; min-height:var
   background:var(--bg2); border-inline-start:4px solid var(--olive)}
 .st-key-staff_banner > *,.st-key-staff_banner [data-testid="stMarkdown"]{flex:none; height:auto}   /* the flex column squeezed its children to 10 px at 1366 wide */
 .st-key-staff_banner p{margin:0; color:var(--ink)}
+/* The card heading is a button carrying the cadet's name (it opens / closes the card): name on the start side, bold, one
+   48 px target. Request cards of the chief use the same shape for their titles. */
+[class*="st-key-ins_open_"] button,[class*="st-key-ins_close_"] button,
+[class*="st-key-chief_open_"] button,[class*="st-key-chief_close_"] button,
+[class*="st-key-reqcard_btn_"] button{justify-content:flex-start; min-block-size:var(--tap); text-align:start}
+[class*="st-key-ins_open_"] button p,[class*="st-key-ins_close_"] button p,
+[class*="st-key-chief_open_"] button p,[class*="st-key-chief_close_"] button p,
+[class*="st-key-reqcard_btn_"] button p{font-weight:800; font-size:1.125rem; text-align:start}
+/* Rows in a card never shrink below their content: the line "שיא ריצה ..." was drawn clipped under "מגדר: ..." because the
+   card's flex column squeezed its children (the same defect as the banner above). Children keep their natural height. */
+[class*="st-key-cadet_"],[class*="st-key-chief_row_"]{overflow:visible}
+[class*="st-key-cadet_"] > *,[class*="st-key-chief_row_"] > *{flex-shrink:0; min-block-size:min-content}
+[class*="st-key-cadet_"] [data-testid="stHorizontalBlock"],[class*="st-key-chief_row_"] [data-testid="stHorizontalBlock"]{
+  flex-shrink:0; min-block-size:min-content; overflow:visible}
+.st-key-staff_cards [class*="st-key-reqcard_"],.st-key-staff_page [class*="st-key-reqcard_"]{gap:var(--gap)}
 
 /* ---- charts and content ---- */
 /* The chart sits on a white card: the plot background is opaque white (contrast of the lines is computed against it). */

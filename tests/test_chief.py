@@ -4,16 +4,13 @@ import datetime as dt
 import inspect
 import json
 import re
-import subprocess
-import sys
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from baror.auth import service
 from baror.domain.grading import grade_stored_value
 from baror.errors import AuthError, NotFoundError, ValidationError
-from baror.storage import admin, allowlist, chief, cohort, db, ops, repo, retention
+from baror.storage import admin, chief, cohort, db, ops, people, repo, retention
 from tests.v2base import V2Case
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -31,6 +28,9 @@ class ChiefCase(V2Case):
       P6 walk (n=1): M 39000 pass                                         -> SUPPRESSED
       P6 push-ups:  F 35 exc, F 12 pass, F 5 fail, M 40 exc, M 20 fail, M(walk) 22 pass -> 2/2/2
     """
+
+    def created(self, uid):
+        return repo.get_user(self.path, uid)["created_at"]
 
     def setUp(self):
         super().setUp()
@@ -215,10 +215,10 @@ class WhoMayCall(ChiefCase):
 
     def test_role_change_takes_effect_on_the_very_next_call(self):
         chief.overview(self.path, self.boss, G, now=NOW)
-        admin.set_role(self.path, self.admin, self.boss, "cadet")
+        people.set_role(self.path, self.admin, self.boss, "cadet")
         with self.assertRaises(AuthError):
             chief.overview(self.path, self.boss, G, now=NOW)
-        ops.set_role(self.path, self.boss, "chief")
+        ops.set_role(self.path, self.boss, "chief", title="mp")
         chief.overview(self.path, self.boss, G, now=NOW)
         ops.deactivate_user(self.path, self.boss)
         with self.assertRaises(AuthError):
@@ -236,11 +236,14 @@ class WhoMayCall(ChiefCase):
             cohort.cohort_summary(self.path, self.ins, self.p6)
 
     def test_a_chief_cannot_call_admin_functions(self):
-        for fn in (lambda: admin.list_accounts(self.path, self.boss),
-                   lambda: admin.set_role(self.path, self.boss, self.cad["p5-0"], "chief"),
-                   lambda: admin.add_allowed_email(self.path, self.boss, "x@example.com")):
+        for fn in (lambda: admin.deactivate_user(self.path, self.boss, self.cad["p5-0"]),
+                   lambda: admin.create_platoon(self.path, self.boss, "Z"),
+                   lambda: people.release_email(self.path, self.boss, self.cad["p5-0"])):
             with self.assertRaises(AuthError):
                 fn()
+        with self.assertRaises(AuthError):                    # a chief cannot grant the chief role (admin only)
+            people.set_role(self.path, self.boss, self.cad["p5-0"], "chief", title="smp",
+                            expected_name="Nm-p5-0", expected_created_at=self.created(self.cad["p5-0"]))
 
 
 class DrillDown(ChiefCase):
@@ -317,42 +320,36 @@ class DrillDown(ChiefCase):
 
 
 class CreatingAChief(ChiefCase):
-    def test_the_allowlist_can_never_mint_a_chief(self):
-        with self.assertRaises(ValidationError):
-            allowlist.add_entry(self.path, "new.chief@example.com", role="chief")
-        with self.assertRaises(ValidationError):
-            admin.add_allowed_email(self.path, self.admin, "new.chief@example.com", role="chief")
-        with self.assertRaises(Exception):
-            with db.transaction(self.path) as c:
-                c.execute("INSERT INTO allowed_emails(email,role) VALUES('x@example.com','chief')")
-        allowlist.add_entry(self.path, "plain@example.com")
-        u = service.register(self.path, email="plain@example.com", name="Plain", gender="F", is_km=False, password="12345678")
-        self.assertEqual(u["role"], "cadet")
-
-    def test_admin_can_appoint_and_it_is_audited_and_clears_platoon_and_grants(self):
+    def test_admin_can_appoint_and_it_is_audited_and_clears_platoon(self):
         cand = self.cad["p5-0"]
-        admin.set_role(self.path, self.admin, cand, "chief")
+        people.set_role(self.path, self.admin, cand, "chief", title="mp", expected_name="Nm-p5-0",
+                        expected_created_at=self.created(cand))
         user = repo.get_user(self.path, cand)
-        self.assertEqual((user["role"], user["platoon_id"]), ("chief", None))
-        self.assertEqual(self.rows(action="admin.set_role", target_user_id=cand), [(self.admin, "admin.set_role", cand, None, "ok")])
+        self.assertEqual((user["role"], user["platoon_id"], user["title"]), ("chief", None, "mp"))
+        self.assertEqual(self.rows(action="role.to_chief", target_user_id=cand), [(self.admin, "role.to_chief", cand, None, "ok")])
         self.assertEqual(len(chief.overview(self.path, cand, G, now=NOW)["platoons"]), 4)
         with self.assertRaises(ValidationError):
-            admin.grant_platoon(self.path, self.admin, cand, self.p5)     # grants are for instructors/admins only
-        admin.set_role(self.path, self.admin, cand, "cadet")
+            ops.grant_platoon(self.path, cand, self.p5)     # a platoon is for instructors only
+        people.set_role(self.path, self.admin, cand, "cadet")
         with self.assertRaises(AuthError):
             chief.overview(self.path, cand, G, now=NOW)
 
     def test_a_cadet_cannot_appoint_themselves_or_anyone(self):
+        c0 = self.cad["p5-0"]
+        for actor in (c0, self.ins):
+            with self.assertRaises(AuthError):
+                people.set_role(self.path, actor, c0, "chief", title="mp", expected_name="Nm-p5-0",
+                                expected_created_at=self.created(c0))
         with self.assertRaises(AuthError):
-            admin.set_role(self.path, self.cad["p5-0"], self.cad["p5-0"], "chief")
-        with self.assertRaises(AuthError):
-            admin.set_role(self.path, self.boss, self.cad["p5-0"], "chief")
+            people.set_role(self.path, self.boss, c0, "chief", title="mp", expected_name="Nm-p5-0",
+                            expected_created_at=self.created(c0))
 
-    def test_operator_command_sets_the_role(self):
-        r = subprocess.run([sys.executable, str(ROOT / "scripts" / "admin_users.py"), "--db", self.path,
-                            "set-role", "p5-0@example.com", "chief"], capture_output=True, text=True, cwd=ROOT)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(repo.get_user(self.path, self.cad["p5-0"])["role"], "chief")
+    def test_operator_path_sets_the_role_with_a_title(self):
+        c0 = self.cad["p5-0"]
+        with self.assertRaises(ValidationError):                      # TITLE_REQUIRED
+            ops.set_role(self.path, c0, "chief")
+        ops.set_role(self.path, c0, "chief", title="smp")
+        self.assertEqual(repo.get_user(self.path, c0)["role"], "chief")
 
     def test_unknown_role_is_still_rejected(self):
         with self.assertRaises(ValidationError):

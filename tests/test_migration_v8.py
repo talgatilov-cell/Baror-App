@@ -1,4 +1,5 @@
-"""Schema v7 -> v8: stored reports, delivery bookkeeping and the automatic-mail switch (OFF by default)."""
+"""Schema v7 -> v8: stored reports, delivery bookkeeping and the automatic-mail switch (OFF by default).
+Every step here is pinned to ``target_version=8``: the later migration (v9) has its own module."""
 import os
 import sqlite3
 import tempfile
@@ -19,7 +20,7 @@ class V7ToV8(unittest.TestCase):
     def test_upgrade_adds_the_tables_with_the_switch_off_and_keeps_existing_data(self):
         with db.reader(self.path) as c:
             users = c.execute("SELECT count(*) FROM users").fetchone()[0]
-        self.assertEqual(db.init_db(self.path), 8)
+        self.assertEqual(db.init_db(self.path, target_version=8), 8)
         with db.reader(self.path) as c:
             self.assertEqual(c.execute("SELECT count(*) FROM users").fetchone()[0], users)
             self.assertEqual(tuple(c.execute("SELECT id, mail_enabled, changed_at, changed_by FROM report_settings").fetchone()),
@@ -29,17 +30,17 @@ class V7ToV8(unittest.TestCase):
         self.assertEqual(db.integrity_check(self.path), [])
 
     def test_idempotent_and_a_second_run_does_not_reset_the_switch(self):
-        db.init_db(self.path)
+        db.init_db(self.path, target_version=8)
         with db.transaction(self.path) as c:
             c.execute("UPDATE report_settings SET mail_enabled=1")
-        self.assertEqual(db.init_db(self.path), 8)
+        self.assertEqual(db.init_db(self.path, target_version=8), 8)
         with db.reader(self.path) as c:
             self.assertEqual(c.execute("SELECT mail_enabled FROM report_settings").fetchone()[0], 1)
 
     def test_a_fresh_database_has_the_same_shape_and_the_switch_is_off(self):
-        db.init_db(self.path)
+        db.init_db(self.path, target_version=8)
         fresh = os.path.join(self._tmp.name, "fresh.db")
-        db.init_db(fresh)
+        db.init_db(fresh, target_version=8)
 
         def shape(p):
             with db.reader(p) as c:
@@ -50,7 +51,7 @@ class V7ToV8(unittest.TestCase):
             self.assertEqual(c.execute("SELECT mail_enabled FROM report_settings").fetchone()[0], 0)
 
     def test_the_checks_are_a_backstop(self):
-        db.init_db(self.path)
+        db.init_db(self.path, target_version=8)
         conn = db.connect(self.path)
         try:
             good = ("INSERT INTO reports(period_type,period_start,period_end,pdf) VALUES('weekly','2026-10-30','2026-11-05',x'25')")
@@ -68,7 +69,7 @@ class V7ToV8(unittest.TestCase):
             conn.close()
 
     def test_deleting_a_report_or_an_account_removes_its_delivery_rows(self):
-        db.init_db(self.path)
+        db.init_db(self.path, target_version=8)
         conn = db.connect(self.path)
         try:
             uid = conn.execute("SELECT id FROM users LIMIT 1").fetchone()[0]

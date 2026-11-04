@@ -11,7 +11,7 @@ Full plan: `IMPLEMENTATION_BRIEF.md`. Work task by task.
 - All Hebrew UI text in `baror/messages_he.py`. Gender-neutral, impersonal phrasing (noun/infinitive labels, no slash forms).
 - `baror/domain` and `baror/storage` never import `streamlit`.
 - Every query touching results is scoped by `user_id`. No `st.cache_*` on user data. Identity comes only from server-side session state.
-- Registration is by e-mail allowlist only (no invite code); refusals are one generic message. Password minimum is 8 characters.
+- Registration is open: cadets register themselves and pick a platoon; every new account is a cadet. Staff roles (instructor, chief) are granted only by an admin or a chief to an already registered account, never self-claimed or pre-listed; admins are created only by the operator script. Refusals stay one generic message. Bot and rate protection (honeypot, signed token, minimum fill time, per-IP and app-wide limits) and the hourly sign-up cap stay mandatory. Password minimum is 8 characters.
 - Never put user input into `st.html`, `unsafe_allow_html` or JavaScript.
 - Custom CSS: use `key=` containers (`.st-key-<key>`), logical properties, no hashed `st-emotion-cache-*` selectors, no `!important` without a comment.
 - Design for 390 px width first; touch targets ≥ 48 px; contrast ≥ 4.5:1 text, 3:1 UI.

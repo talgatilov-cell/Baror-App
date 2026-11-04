@@ -63,15 +63,6 @@ def as_uid_read(path, uid):
         print("ERR", type(e).__name__)
 
 
-def register_allowlisted(path, email):
-    """Allowlist registration race: prints OK or the exception class name (RegistrationDeniedError for the losers)."""
-    try:
-        repo.register_with_allowlist(path, email=email, name="n", gender="M", is_km=False, pw_hash="h")
-        print("OK")
-    except BarorError as e:
-        print(type(e).__name__)
-
-
 def init_only(path, target=None):
     try:
         print("VERSION", db.init_db(path, target_version=int(target) if target else None))

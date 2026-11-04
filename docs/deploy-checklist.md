@@ -57,9 +57,13 @@ Nothing below is assumed.
 
 ## Deploy
 
-- [ ] Create `baror.env` on the host if any setting differs from the defaults (see README, environment variables).
+- [ ] **Schema v9 (in progress, 2026-11-04): back up first** (`scripts/backup.py`), then follow runbook section 10 (v8 to v9: one platoon per instructor, `allowed_emails` dropped, grants dropped and audited as `migrate.v9_grant_dropped`). List the instructors per platoon beforehand.
+- [ ] **Still open: run the v9 migration on a copy of the database inside the Docker image (SQLite 3.40.1).** The `ADD COLUMN ... CHECK` statements were only tested with the developer machine's SQLite; `docker compose logs baror` must start with `database ready: schema v9`.
+- [ ] Create `baror.env` on the host if any setting differs from the defaults (see README, environment variables). New in v9: `BAROR_SIGNUP_CAP_PER_HOUR` (default 120), `BAROR_REGISTRATION_OPEN` (default 1), `BAROR_JOIN_LINK_SECRET` (32+ characters, unset = join links off), `BAROR_PUBLIC_URL`.
 - [ ] `docker compose up -d --build`; wait for `healthy` in `docker compose ps`.
-- [ ] Create the first admin (runbook, section 1); add the cadets' addresses to the allowlist.
+- [ ] Create the **two admins** (runbook, section 1): each registers in the app like a cadet, then `admin_users.py set-role EMAIL admin` (cap 2, operator script only). There is no allowlist any more; registration is open, so decide before opening the address whether `BAROR_REGISTRATION_OPEN` should start at `0`.
+- [ ] Grant the staff roles afterwards from the app, with the out-of-band identity check (runbook, section 3.1). Set titles (מ"פ, סמ"פ, מ"מ, מ"כ).
+- [ ] Owner confirms the registration limits (60/h per IP, 600/h app-wide, 120 sign-ups/h) and ADR-0004 (status Proposed).
 - [ ] Put the HTTPS reverse proxy in front; confirm the cookie gets `Secure` and sign-in survives a page reload.
 - [ ] Schedule: daily `scripts/backup.py` and `scripts/retention.py` from the host; copy backups off the machine.
 - [ ] Set `course-end` for every platoon (`admin_users.py course-end`), then `scripts/retention.py --dry-run` once.
@@ -69,7 +73,7 @@ Nothing below is assumed.
 - [ ] Sign in as a test account, enter a result, sign out, reload (expect the sign-in page).
 - [ ] Check `docker compose logs baror` for errors for 15 minutes.
 - [ ] Delete any leftover `users.json`, `users.json.premigration` and `baror.db.before-restore` after verifying the data.
-- [ ] Announce to cadets only after the privacy notice is approved and the export/delete screens exist.
+- [ ] Announce to cadets only after the privacy notice (including the proposed open-registration paragraph) is approved and the export/delete screens exist.
 
 ## Rollback
 

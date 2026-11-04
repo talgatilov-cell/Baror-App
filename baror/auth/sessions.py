@@ -65,8 +65,10 @@ def resolve(db_path, token: Any, now: dt.datetime | None = None, *, slide_days: 
     th = hash_token(token)
     with db.reader(db_path) as c:
         row = c.execute(
-            "SELECT s.expires_at, u.id, u.email, u.name, u.gender, u.is_km, u.must_change_pw, u.role "
-            "FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.revoked=0 AND s.expires_at>? AND u.active=1",
+            "SELECT s.expires_at, u.id, u.email, u.name, u.gender, u.is_km, u.must_change_pw, u.role, u.title, "
+            "COALESCE(ip.platoon_id, u.platoon_id) AS platoon_id "
+            "FROM sessions s JOIN users u ON u.id=s.user_id LEFT JOIN instructor_platoons ip ON ip.instructor_id=u.id "
+            "WHERE s.token_hash=? AND s.revoked=0 AND s.expires_at>? AND u.active=1",
             (th, _iso(t))).fetchone()
     if row is None:
         return None
@@ -76,7 +78,7 @@ def resolve(db_path, token: Any, now: dt.datetime | None = None, *, slide_days: 
             with db.transaction(db_path) as c:
                 c.execute("UPDATE sessions SET expires_at=? WHERE token_hash=? AND revoked=0",
                           (_iso(t + dt.timedelta(days=slide_days)), th))
-    return {k: row[k] for k in ("id", "email", "name", "gender", "is_km", "must_change_pw", "role")}
+    return {k: row[k] for k in ("id", "email", "name", "gender", "is_km", "must_change_pw", "role", "title", "platoon_id")}
 
 
 def revoke(db_path, token: Any) -> None:

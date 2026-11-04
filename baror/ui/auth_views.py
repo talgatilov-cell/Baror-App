@@ -1,8 +1,10 @@
 """Sign-in, registration and password-change forms. Each returns the signed-in user dict after success (a session has
 then been started and the caller sets the cookie), else None.
 
-* One generic message for every sign-in failure and ONE for every registration refusal (no allowlist oracle).
-* Field problems that do not depend on the allowlist (password length, mismatch, missing gender) are reported per field.
+* One generic message for every sign-in failure and ONE for every registration refusal (no account-existence oracle).
+* Registration is open and always creates a cadet; the platoon is optional ("עדיין לא ידוע"). A valid ``?join=`` link
+  only pre-selects it. ``BAROR_REGISTRATION_OPEN=0`` replaces the form with a closed message.
+* Field problems that do not depend on the e-mail (password length, mismatch, missing gender) are reported per field.
 * Entered values stay in the form on error (Streamlit keeps widget state).
 * Do not open a ``st.form`` from inside another form; the caller renders these inside ``st.empty().container()``."""
 from __future__ import annotations
@@ -14,9 +16,10 @@ import streamlit as st
 
 from baror.auth import passwords, service
 from baror.config import Config
-from baror.errors import AuthError, BarorError, RateLimitedError
+from baror.errors import AuthError, BarorError, RateLimitedError, RegistrationClosedError, RegistrationDeniedError
 from baror.logging_setup import log_event
 from baror.messages_he import render_exception, t
+from baror.storage import signup
 from baror.ui import guards, session
 
 GENDERS = {"gender_male": "M", "gender_female": "F"}
@@ -78,17 +81,47 @@ def login_form(cfg: Config):
     return user
 
 
+PLATOON_KEY = "reg_platoon"            # widget key of the platoon selector
+JOIN_PID_KEY = "_reg_join_pid"         # the platoon a join link pre-selected (plain state, dropped at sign-out)
+
+
+def _join_preselection(cfg: Config, platoons: list[dict]) -> None:
+    """``?join=<token>`` only PRE-SELECTS a platoon, once per browser session and before the selector exists. A missing,
+    malformed, forged, expired or revoked token is ignored silently (no message, no hint that a token was looked at);
+    the selector stays editable and the choice is never put into HTML."""
+    if PLATOON_KEY in st.session_state or not cfg.join_link_secret:
+        return
+    token = st.query_params.get("join")
+    if not isinstance(token, str):
+        return
+    pid = signup.platoon_from_join_token(cfg.db_path, cfg.join_link_secret, token)
+    if pid is not None and any(p["id"] == pid for p in platoons):
+        st.session_state[PLATOON_KEY] = pid
+        st.session_state[JOIN_PID_KEY] = pid
+
+
 def register_form(cfg: Config):
+    if not cfg.registration_open:                                           # kill switch: nothing else is rendered
+        st.warning(render_exception(RegistrationClosedError()))
+        return None
     guards.issue_token(cfg, "register")
     st.caption(t("register_intro"))
     if cfg.cohort_views:
         with st.container(key="cadet_notice"):
             st.write(t("cadet_view_notice"))                                  # told BEFORE the account exists
+    platoons = signup.public_platoons(cfg.db_path)
+    names = {p["id"]: p["name"] for p in platoons}
+    _join_preselection(cfg, platoons)
+    if st.session_state.get(JOIN_PID_KEY) is not None:
+        st.caption(t("join_preselected"))
     with st.form("register"):
         name = st.text_input(t("field_name"), key="reg_name", max_chars=80)
         email = st.text_input(t("field_email"), key="reg_email", autocomplete="username")
         gender_label = st.selectbox(t("field_gender"), [t(k) for k in GENDERS], index=None,
                                     placeholder=t("choose_placeholder"), key="reg_gender")
+        platoon_id = st.selectbox(t("field_platoon"), [None, *names], key=PLATOON_KEY,
+                                  format_func=lambda pid: t("reg_platoon_none") if pid is None else names.get(pid, "?"))
+        st.caption(t("reg_platoon_hint"))
         is_km = st.checkbox(t("field_km"), key="reg_km")
         password = st.text_input(t("field_password"), type="password", key="reg_pass", autocomplete="new-password")
         st.caption(t("password_rule"))                       # the rule is visible BEFORE typing (not a hidden tooltip)
@@ -98,7 +131,7 @@ def register_form(cfg: Config):
     if not submitted:
         return None
     ip, limiter = guards.client_ip(cfg), guards.limiter()
-    wait = limiter.check_register(ip)
+    wait = max(limiter.check_register(ip), limiter.check_register_app())    # both BEFORE the password hash
     if wait > 0:
         log_event("register_blocked_address", level=logging.WARNING)
         _blocked(wait)
@@ -123,13 +156,18 @@ def register_form(cfg: Config):
     if password != confirm:
         st.error(t("password_confirm_mismatch"))
         return None
-    limiter.record_register_attempt(ip)                  # every attempt that reaches the password hash counts
+    limiter.record_register_attempt(ip)                  # every attempt that reaches the password hash counts,
+    limiter.record_register_app()                        # per address and for the whole app
     try:
-        user = service.register(cfg.db_path, email=email, name=name, gender=gender, is_km=is_km, password=password)
+        user = service.register(cfg.db_path, email=email, name=name, gender=gender, is_km=is_km, password=password,
+                                platoon_id=platoon_id, cap=cfg.signup_cap_per_hour,
+                                registration_open=cfg.registration_open)
     except BarorError as exc:
         # the user sees ONE text; the operator's log keeps the reason (its detail never contains the e-mail)
         log_event("register_refused", level=logging.INFO, email=email, reason=getattr(exc, "detail", None))
         _show(exc)
+        if isinstance(exc, RegistrationDeniedError):
+            st.caption(t("register_taken_note"))          # shown for EVERY generic refusal, so it confirms nothing
         return None
     session.start(cfg.db_path, user["id"], cfg.session_days)
     log_event("register_ok", user_id=user["id"])

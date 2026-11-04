@@ -19,6 +19,7 @@ from baror.logging_setup import log_event
 from baror.messages_he import render_exception, t
 from baror.storage import accommodations as store
 from baror.storage import chief as chief_store
+from baror.storage import cohort as cohort_store
 from baror.ui.components import iso
 
 KIND_ICON = {"relief": "tune", "exemption": "do_not_disturb_on"}
@@ -176,21 +177,24 @@ def add_dialog(cfg: Config, actor: dict, cadet_id: int) -> None:
             st.rerun(scope="fragment")
         st.session_state.pop(f"_accd_error_{cadet_id}", None)
         st.session_state["_notice"] = t("acc_added")
-        _refresh_chief_open(cfg, actor["id"], cadet_id)
+        refresh_open(cfg, actor, cadet_id)
         st.rerun()
 
 
-def _refresh_chief_open(cfg: Config, actor_id: int, cadet_id: int) -> None:
-    """The chief's opened-cadet view is a snapshot in session state. After an add it would still be the old one (the
-    record is stored but not on screen, which looks like 'not saved'): re-read it (the same named, audited read as
-    opening), or drop it if that read is refused."""
-    held = st.session_state.get("_chief_open")
-    if not held or held.get("cadet") != cadet_id:
+def refresh_open(cfg: Config, actor: dict, cadet_id: int | None = None) -> None:
+    """The opened-cadet view (chief: ``_chief_open``, instructor: ``_staff_open``) is a snapshot in session state. After
+    an add or a deletion request it would still be the old one (the record is stored but not on screen, which looks like
+    'not saved'): re-read it (the same named, audited read as opening), or drop it if that read is refused. With
+    ``cadet_id`` it only acts when that cadet is the opened one."""
+    key, read = ("_chief_open", chief_store.get_cadet_results) if actor.get("role") == "chief" else \
+        ("_staff_open", cohort_store.cadet_history)
+    held = st.session_state.get(key)
+    if not held or (cadet_id is not None and held.get("cadet") != cadet_id):
         return
     try:
-        held["data"] = chief_store.get_cadet_results(cfg.db_path, actor_id, cadet_id)
+        held["data"] = read(cfg.db_path, actor["id"], held["cadet"])
     except BarorError:
-        st.session_state.pop("_chief_open", None)
+        st.session_state.pop(key, None)
 
 
 @st.dialog(t("acc_request_title"))
@@ -208,7 +212,7 @@ def request_delete_dialog(cfg: Config, actor: dict, rec: dict) -> None:
             st.error(problem, icon=":material/error:")
             return
         st.session_state["_notice"] = t("acc_requested")
-        st.session_state.pop("_chief_open", None)            # a stale copy of the record would still show no request
+        refresh_open(cfg, actor)                             # a stale copy of the record would still show no request
         st.rerun()
 
 

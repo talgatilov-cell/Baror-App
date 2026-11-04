@@ -2,8 +2,8 @@
 opening a cadet and saving the dialog "does not save").
 
 Finding (browser run, Playwright, throwaway venv outside the repo): the row WAS stored, but the chief's opened-cadet
-view and the platoon list are snapshots kept in session state (``_chief_open``, ``_chief_rows``); after the save they
-were still the old ones, so the new record was not on screen and the chief concluded nothing had been saved.
+view and the platoon list were snapshots kept in session state (``_chief_open``; the instructor's is ``_staff_open``);
+after the save they were still the old ones (``accom.refresh_open`` now re-reads the opened one), so the new record was not on screen and the chief concluded nothing had been saved.
 
 AppTest cannot rerun a dialog fragment on its own: a click reruns the whole script, where the opener button is False
 and the dialog is never drawn again. So this test stands in for the browser: the dialog body is drawn inline (it is the
@@ -76,6 +76,8 @@ class AddDialogFlow(StaffBase):
 
     def test_the_instructor_adds_from_the_cadet_card_and_sees_the_record(self):
         at = self.sign_in("ins@example.com")
+        at.button(key=f"ins_open_{self.ca}").click()           # the card shows the name only until the name is pressed
+        at.run()
         at.button(key=f"accadd_{self.ca}").click()
         at.run()
         self.assertFalse(at.exception)

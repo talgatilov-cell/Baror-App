@@ -9,6 +9,14 @@
     FORWARDED_ALLOW_IPS   read only to REFUSE the unsafe value "*" (the client-sent X-Forwarded-For would win)
     BAROR_COHORT_VIEWS    "1" shows the instructor and chief screens (default off until the owner approves the
                           notice that cadets are given about them)
+    BAROR_REGISTRATION_OPEN   "1" (default) or "0": the kill switch. "0" closes self-registration at once (the form
+                          says so); sign-in is not affected. Read at start-up, so changing it needs a restart.
+    BAROR_SIGNUP_CAP_PER_HOUR  most sign-ups per hour for the whole database, 1..1000 (default 120). A missing,
+                          non-numeric or out-of-range value falls back to 120 (it never switches the cap off).
+    BAROR_JOIN_LINK_SECRET    secret that signs per-platoon join links (at least 32 characters; never logged, never part
+                          of a repr). Unset = join links are off. Changing it revokes every link issued so far.
+    BAROR_PUBLIC_URL      optional public address of the app, https only (for example https://baror.example.org). Used
+                          ONLY to display a complete join link; unset = only the query string (?join=...) is shown.
 
 Outgoing mail (only the report script reads these, via ``mail_from_env``; unset BAROR_SMTP_HOST = mail is not configured):
     BAROR_SMTP_HOST       SMTP server host name
@@ -29,12 +37,18 @@ import zoneinfo
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping
+from urllib.parse import urlsplit
 
 from baror.errors import ConfigError
 
 DEFAULT_DB_PATH = "/data/baror.db"
 ENV_KEYS = ("DB_PATH", "SESSION_DAYS", "TZ_NAME", "BAROR_COHORT_VIEWS", "TRUSTED_PROXIES", "BAROR_BOT_MIN_SECONDS",
-            "FORWARDED_ALLOW_IPS")
+            "FORWARDED_ALLOW_IPS", "BAROR_SIGNUP_CAP_PER_HOUR", "BAROR_REGISTRATION_OPEN", "BAROR_JOIN_LINK_SECRET",
+            "BAROR_PUBLIC_URL")
+DEFAULT_SIGNUP_CAP = 120
+MIN_JOIN_SECRET_CHARS = 32
+MAX_JOIN_SECRET_CHARS = 512
+MAX_PUBLIC_URL_CHARS = 200
 
 
 def env_key(env: Mapping[str, str] | None = None) -> tuple:
@@ -52,6 +66,14 @@ class Config:
     cohort_views: bool = False
     trusted_proxies: tuple = ()
     bot_min_seconds: float = 2.0
+    signup_cap_per_hour: int = DEFAULT_SIGNUP_CAP
+    registration_open: bool = True
+    join_link_secret: str | None = field(default=None, repr=False)      # never shown in a repr or a log line
+    public_url: str | None = None
+
+    @property
+    def join_links_enabled(self) -> bool:
+        return self.join_link_secret is not None
 
     @property
     def tz(self) -> zoneinfo.ZoneInfo:
@@ -64,6 +86,53 @@ def _flag(raw: str | None, name: str) -> bool:
     if raw.strip() in ("0", "1"):
         return raw.strip() == "1"
     raise ConfigError(detail=f"{name} must be 0 or 1")
+
+
+def _open_flag(raw: str | None) -> bool:
+    """BAROR_REGISTRATION_OPEN: unset or blank = open (1); only "0" or "1" are accepted, so a typo stops the start-up
+    with a readable message instead of silently leaving registration open or closed."""
+    if raw is None or raw.strip() == "":
+        return True
+    if raw.strip() in ("0", "1"):
+        return raw.strip() == "1"
+    raise ConfigError(detail="BAROR_REGISTRATION_OPEN must be 0 or 1")
+
+
+def _signup_cap(raw: str | None) -> int:
+    """1..1000, anything else (unset, text, 0, 5000) -> the default: a typo never removes the protection."""
+    try:
+        n = int((raw or "").strip())
+    except ValueError:
+        return DEFAULT_SIGNUP_CAP
+    return n if 1 <= n <= 1000 else DEFAULT_SIGNUP_CAP
+
+
+def _join_secret(raw: str | None) -> str | None:
+    if raw is None or raw.strip() == "":
+        return None                                       # join links are off
+    if not MIN_JOIN_SECRET_CHARS <= len(raw) <= MAX_JOIN_SECRET_CHARS or raw != raw.strip() or \
+            any(ord(ch) < 33 for ch in raw):
+        raise ConfigError(detail=f"BAROR_JOIN_LINK_SECRET must be {MIN_JOIN_SECRET_CHARS} to {MAX_JOIN_SECRET_CHARS} "
+                                 "characters without spaces or line breaks")
+    return raw
+
+
+def _public_url(raw: str | None) -> str | None:
+    if raw is None or raw.strip() == "":
+        return None
+    value = raw.strip()
+    try:
+        parts = urlsplit(value)
+        host = parts.hostname
+        parts.port                                        # noqa: B018  (raises ValueError for a bad port)
+    except ValueError:
+        raise ConfigError(detail="BAROR_PUBLIC_URL is not a valid address") from None
+    if len(value) > MAX_PUBLIC_URL_CHARS or parts.scheme != "https" or not host or parts.username is not None \
+            or parts.password is not None or parts.query or parts.fragment or parts.path.strip("/") \
+            or not re.fullmatch(r"[A-Za-z0-9.\-:\[\]]+", parts.netloc):
+        raise ConfigError(detail="BAROR_PUBLIC_URL must be an https address with a host name only "
+                                 "(no user name, path, query or fragment)")
+    return f"https://{parts.netloc}"
 
 
 def _proxies(raw: str | None) -> tuple:
@@ -105,7 +174,11 @@ def from_env(env: Mapping[str, str] | None = None) -> Config:
     db_path = Path(env.get("DB_PATH") or DEFAULT_DB_PATH)
     return Config(db_path=db_path, session_days=days, tz_name=tz_name,
                   cohort_views=_flag(env.get("BAROR_COHORT_VIEWS"), "BAROR_COHORT_VIEWS"),
-                  trusted_proxies=_proxies(env.get("TRUSTED_PROXIES")), bot_min_seconds=bot_min)
+                  trusted_proxies=_proxies(env.get("TRUSTED_PROXIES")), bot_min_seconds=bot_min,
+                  signup_cap_per_hour=_signup_cap(env.get("BAROR_SIGNUP_CAP_PER_HOUR")),
+                  registration_open=_open_flag(env.get("BAROR_REGISTRATION_OPEN")),
+                  join_link_secret=_join_secret(env.get("BAROR_JOIN_LINK_SECRET")),
+                  public_url=_public_url(env.get("BAROR_PUBLIC_URL")))
 
 
 @dataclass(frozen=True)

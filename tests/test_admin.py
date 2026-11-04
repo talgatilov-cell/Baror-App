@@ -17,40 +17,39 @@ class AdminBase(V2Case):
         self.adm = self.staff("adm@x.com", role="admin")
         self.p = self.platoon("A")
         self.cad = self.cadet("c@x.com", self.p)
-        self.ins = self.staff("i@x.com")
+        self.ins = self.staff("i@x.com", platoons=[self.p], title="cmdr")
 
     def calls(self, actor):
         P = self.path
         return {
-            "add_allowed_email": lambda: admin.add_allowed_email(P, actor, "n@x.com"),
-            "remove_allowed_email": lambda: admin.remove_allowed_email(P, actor, "n@x.com"),
-            "list_allowed_emails": lambda: admin.list_allowed_emails(P, actor),
-            "list_accounts": lambda: admin.list_accounts(P, actor),
             "deactivate_user": lambda: admin.deactivate_user(P, actor, self.cad),
             "reactivate_user": lambda: admin.reactivate_user(P, actor, self.cad),
-            "set_role": lambda: admin.set_role(P, actor, self.cad, "instructor"),
             "create_platoon": lambda: admin.create_platoon(P, actor, "Z"),
-            "set_user_platoon": lambda: admin.set_user_platoon(P, actor, self.cad, None),
-            "grant_platoon": lambda: admin.grant_platoon(P, actor, self.ins, self.p),
-            "revoke_platoon": lambda: admin.revoke_platoon(P, actor, self.ins, self.p),
         }
 
     def state(self):
         with db.reader(self.path) as c:
-            return [tuple(r) for t in ("users", "platoons", "instructor_platoons", "allowed_emails", "audit_log", "sessions")
-                    for r in c.execute(f"SELECT * FROM {t}")]
+            return [tuple(r) for t in ("users", "platoons", "instructor_platoons", "cadet_change_requests", "audit_log",
+                                       "sessions") for r in c.execute(f"SELECT * FROM {t}")]
 
 
 class AdminAuthorisation(AdminBase):
     def test_every_public_function_is_covered_by_the_matrix(self):
+        # schema v9: roles, titles, grants and the account table moved to baror.storage.people (admin AND chief)
         pub = {n for n, f in inspect.getmembers(admin, inspect.isfunction)
                if not n.startswith("_") and f.__module__ == admin.__name__}
         self.assertEqual(pub, set(self.calls(self.adm)))
 
+    def test_the_removed_web_functions_are_gone(self):
+        for name in ("set_role", "grant_platoon", "revoke_platoon", "set_user_platoon", "list_accounts",
+                     "add_allowed_email", "remove_allowed_email", "list_allowed_emails"):
+            self.assertFalse(hasattr(admin, name), name)
+
     def test_non_admin_actors_refused_and_nothing_changes(self):
         dead = self.staff("dead@x.com", role="admin")
         ops.deactivate_user(self.path, dead)
-        for label, actor in [("cadet", self.cad), ("instructor", self.ins), ("deactivated admin", dead),
+        chief = self.staff("chief@x.com", role="chief")
+        for label, actor in [("cadet", self.cad), ("instructor", self.ins), ("chief", chief), ("deactivated admin", dead),
                              ("unknown", 9999), ("None", None), ("str", "1"), ("bool", True), ("zero", 0)]:
             before = self.state()
             for name, f in self.calls(actor).items():
@@ -61,43 +60,35 @@ class AdminAuthorisation(AdminBase):
     def test_role_reread_each_call(self):
         admin.create_platoon(self.path, self.adm, "Z1")
         other = self.staff("a2@x.com", role="admin")
-        ops.set_role(self.path, self.adm, "instructor")  # other admin remains
+        ops.set_role(self.path, self.adm, "instructor", title="cmdr", platoon_id=self.p)  # other admin remains
         with self.assertRaises(AuthError):
             admin.create_platoon(self.path, self.adm, "Z2")
         self.assertIsInstance(admin.create_platoon(self.path, other, "Z3"), int)
 
     def test_admin_happy_paths_audit_ids_only(self):
         a = self.adm
-        admin.add_allowed_email(self.path, a, "New@X.com", platoon_id=self.p)
-        self.assertEqual([r["email"] for r in admin.list_allowed_emails(self.path, a)], ["new@x.com"])
-        self.assertTrue(admin.remove_allowed_email(self.path, a, "new@x.com"))
         pid = admin.create_platoon(self.path, a, "B")
-        admin.set_role(self.path, a, self.cad, "instructor")
-        admin.grant_platoon(self.path, a, self.cad, pid)
-        self.assertTrue(admin.revoke_platoon(self.path, a, self.cad, pid))
-        self.assertFalse(admin.revoke_platoon(self.path, a, self.cad, pid))
         admin.deactivate_user(self.path, a, self.ins)
         admin.reactivate_user(self.path, a, self.ins)
-        self.assertEqual(len(admin.list_accounts(self.path, a)), 3)
         acts = [r[1] for r in self.audit_rows(actor_id=a)]
-        for want in ("admin.allow_add", "admin.allow_remove", "admin.platoon_create", "admin.set_role", "admin.grant",
-                     "admin.revoke", "admin.deactivate", "admin.reactivate"):
+        for want in ("admin.platoon_create", "admin.deactivate", "admin.reactivate"):
             self.assertIn(want, acts)
+        self.assertIn((a, "admin.platoon_create", None, pid, "ok"), self.audit_rows())
         with db.reader(self.path) as c:
-            self.assertNotIn("new@x.com", repr([tuple(r) for r in c.execute("SELECT * FROM audit_log")]))
+            self.assertNotIn("i@x.com", repr([tuple(r) for r in c.execute("SELECT * FROM audit_log")]))
 
     def test_failed_operation_leaves_no_audit_row(self):
         before = len(self.audit_rows())
         with self.assertRaises(NotFoundError):
             admin.deactivate_user(self.path, self.adm, 9999)
-        with self.assertRaises(ValidationError):
-            admin.set_role(self.path, self.adm, self.cad, "root")
-        with self.assertRaises(ValidationError):
-            admin.grant_platoon(self.path, self.adm, self.cad, self.p)  # cadets get no grants
         with self.assertRaises(NotFoundError):
-            admin.grant_platoon(self.path, self.adm, self.ins, 9999)
+            admin.reactivate_user(self.path, self.adm, 9999)
         with self.assertRaises(ValidationError):
-            admin.set_user_platoon(self.path, self.adm, self.ins, self.p)  # staff have no platoon
+            ops.grant_platoon(self.path, self.cad, self.p)                 # cadets get no platoon grant
+        with self.assertRaises(ValidationError):
+            ops.grant_platoon(self.path, self.ins, 9999)                   # unknown platoon
+        with self.assertRaises(ValidationError):
+            ops.set_user_platoon(self.path, self.ins, self.p)              # staff have no cadet platoon
         self.assertEqual(len(self.audit_rows()), before)
 
     def test_ops_is_not_imported_by_app_code(self):
@@ -122,13 +113,12 @@ class AdminAuthorisation(AdminBase):
 class AdminSafety(AdminBase):
     def test_last_admin_cannot_be_deactivated_or_demoted(self):
         for f in (lambda: admin.deactivate_user(self.path, self.adm, self.adm),
-                  lambda: admin.set_role(self.path, self.adm, self.adm, "instructor"),
-                  lambda: admin.set_role(self.path, self.adm, self.adm, "cadet"),
                   lambda: ops.deactivate_user(self.path, self.adm),
-                  lambda: ops.set_role(self.path, self.adm, "cadet")):
+                  lambda: ops.set_role(self.path, self.adm, "cadet"),
+                  lambda: ops.set_role(self.path, self.adm, "instructor", title="cmdr", platoon_id=self.p)):
             with self.assertRaises(ConflictError):
                 f()
-        self.assertEqual(admin.list_accounts(self.path, self.adm)[0]["role"], "admin")
+        self.assertEqual(ops.list_accounts(self.path)[0]["role"], "admin")
 
     def test_second_admin_allows_then_guard_returns(self):
         a2 = self.staff("a2@x.com", role="admin")
@@ -136,9 +126,9 @@ class AdminSafety(AdminBase):
         with self.assertRaises(ConflictError):
             admin.deactivate_user(self.path, self.adm, self.adm)
         admin.reactivate_user(self.path, self.adm, a2)
-        admin.set_role(self.path, a2, self.adm, "instructor")
+        ops.set_role(self.path, self.adm, "cadet")      # a2 remains
         with self.assertRaises(ConflictError):
-            admin.set_role(self.path, a2, a2, "cadet")
+            ops.set_role(self.path, a2, "cadet")
 
     def test_inactive_admin_does_not_count_as_other_admin(self):
         a2 = self.staff("a2@x.com", role="admin")
@@ -147,7 +137,22 @@ class AdminSafety(AdminBase):
             admin.deactivate_user(self.path, self.adm, self.adm)
 
     def test_set_admin_role_noop_on_last_admin_ok(self):
-        admin.set_role(self.path, self.adm, self.adm, "admin")
+        ops.set_role(self.path, self.adm, "admin")
+
+    def test_there_are_at_most_two_active_admins(self):
+        self.staff("a2@x.com", role="admin")
+        with self.assertRaises(ConflictError) as cm:
+            ops.set_role(self.path, self.cad, "admin")
+        self.assertEqual(cm.exception.message_key, "ADMIN_LIMIT")
+        self.assertEqual(repo.get_user(self.path, self.cad)["role"], "cadet")
+
+    def test_an_inactive_admin_does_not_count_toward_the_cap_but_comes_back_only_if_there_is_room(self):
+        a2 = self.staff("a2@x.com", role="admin")
+        ops.deactivate_user(self.path, a2)
+        ops.set_role(self.path, self.cad, "admin")                       # adm + cad = 2 active
+        with self.assertRaises(ConflictError) as cm:
+            admin.reactivate_user(self.path, self.adm, a2)
+        self.assertEqual(cm.exception.message_key, "ADMIN_LIMIT")
 
     def test_deactivate_revokes_sessions(self):
         with db.transaction(self.path) as c:
@@ -157,15 +162,16 @@ class AdminSafety(AdminBase):
             self.assertEqual(c.execute("SELECT revoked FROM sessions").fetchone()[0], 1)
 
     def test_role_change_away_from_staff_drops_grants(self):
-        ops.grant_platoon(self.path, self.ins, self.p)
-        admin.set_role(self.path, self.adm, self.ins, "cadet")
+        ops.set_role(self.path, self.ins, "cadet")
         with db.reader(self.path) as c:
             self.assertEqual(c.execute("SELECT count(*) FROM instructor_platoons").fetchone()[0], 0)
 
     def test_promoting_cadet_clears_platoon_membership(self):
-        admin.set_role(self.path, self.adm, self.cad, "instructor")
+        ops.set_role(self.path, self.cad, "instructor", title="cmdr", platoon_id=self.p)
         with db.reader(self.path) as c:
             self.assertIsNone(c.execute("SELECT platoon_id FROM users WHERE id=?", (self.cad,)).fetchone()[0])
+            self.assertEqual(c.execute("SELECT platoon_id FROM instructor_platoons WHERE instructor_id=?",
+                                       (self.cad,)).fetchone()[0], self.p)
 
     def test_duplicate_platoon_and_bad_names(self):
         from baror.errors import BarorError
@@ -219,6 +225,23 @@ class OpsPath(AdminBase):
         ops.grant_platoon(self.path, self.ins, pid)
         self.assertIn((None, "admin.grant", self.ins, pid, "ok"), self.audit_rows())
         self.assertEqual(len(ops.list_accounts(self.path)), 3)
+
+    def test_grant_platoon_sets_the_one_platoon_and_does_not_add_one(self):
+        pid = ops.create_platoon(self.path, "Q")
+        ops.grant_platoon(self.path, self.ins, pid)
+        with db.reader(self.path) as c:
+            self.assertEqual([tuple(r) for r in c.execute("SELECT instructor_id,platoon_id FROM instructor_platoons")],
+                             [(self.ins, pid)])
+        self.assertEqual({a["id"]: (a["platoon_id"], a["title"]) for a in ops.list_accounts(self.path)}[self.ins], (pid, "cmdr"))
+
+    def test_ops_set_title_and_the_title_rules(self):
+        ops.set_title(self.path, self.ins, "mm")
+        with db.reader(self.path) as c:
+            self.assertEqual(c.execute("SELECT is_mm FROM instructor_platoons WHERE instructor_id=?", (self.ins,)).fetchone()[0], 1)
+        with self.assertRaises(ValidationError):
+            ops.set_title(self.path, self.ins, "mp")                       # a chief title on an instructor
+        with self.assertRaises(ValidationError):
+            ops.set_title(self.path, self.cad, "cmdr")                     # a cadet carries no title
 
 
 if __name__ == "__main__":

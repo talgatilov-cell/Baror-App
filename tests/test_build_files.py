@@ -177,9 +177,12 @@ class Docs(unittest.TestCase):
         for name in config.ENV_KEYS:
             self.assertIn(f"`{name}`", readme, name)
         self.assertIn("FORWARDED_ALLOW_IPS", readme)
-        for script in ("backup.py", "retention.py", "allowlist.py", "admin_users.py", "migrate_json_to_sqlite.py", "init_db.py",
+        for script in ("backup.py", "retention.py", "admin_users.py", "migrate_json_to_sqlite.py", "init_db.py",
                        "make_lock.py", "--dry-run", "users.json.premigration", "HSTS"):
             self.assertIn(script, readme, script)
+        for name in ("BAROR_SIGNUP_CAP_PER_HOUR", "BAROR_REGISTRATION_OPEN", "BAROR_JOIN_LINK_SECRET", "BAROR_PUBLIC_URL"):
+            self.assertIn(name, config.ENV_KEYS, f"{name} is read by the app but is not in config.ENV_KEYS")
+        self.assertFalse((ROOT / "scripts" / "allowlist.py").exists(), "there is no allowlist any more")
 
     def test_every_script_the_docs_name_exists(self):
         for doc in ("README.md", "docs/runbook.md"):
@@ -190,15 +193,20 @@ class Docs(unittest.TestCase):
         self.assertTrue((ROOT / "tools" / "make_lock.py").exists())
 
     def test_every_operator_subcommand_in_the_runbook_is_a_real_one(self):
-        real = {"list", "set-role", "deactivate", "reactivate", "platoon-add", "assign", "grant", "revoke", "course-end"}
+        real = {"list", "set-role", "set-title", "release-email", "deactivate", "reactivate", "platoon-add", "assign",
+                "grant", "course-end"}          # `revoke` was removed in v9: an instructor always has exactly one platoon
         for cmd in re.findall(r"admin_users\.py(?: --db \S+)? ([a-z-]+)", read("docs/runbook.md") + read("README.md")):
             self.assertIn(cmd, real, cmd)
-        for cmd in re.findall(r"allowlist\.py(?: --db \S+)? ([a-z]+)", read("docs/runbook.md") + read("README.md")):
-            self.assertIn(cmd, {"add", "remove", "list", "import"}, cmd)
+        parser_help = subprocess.run([sys.executable, str(ROOT / "scripts" / "admin_users.py"), "--help"],
+                                     capture_output=True, text=True, timeout=60).stdout
+        for cmd in real:                        # the list above is the real command set of the script, not a wish
+            self.assertIn(cmd, parser_help, cmd)
+        self.assertNotIn("revoke", parser_help)
 
     def test_privacy_notice_is_a_marked_draft_with_the_owner_placeholder_and_says_nothing_about_staff_access(self):
         text = read("docs/privacy-notice-he.md")
-        note, notice = text.split("\n---\n", 1)
+        note, rest = text.split("\n---\n", 1)
+        notice = rest.split("\n---\n", 1)[0]       # the FIRST notice section; later sections are marked proposals
         self.assertIn("טיוטה", text.splitlines()[0])
         self.assertIn("לא נבנו", note)                                          # export/delete screens do not exist yet
         self.assertIn("[ממתין לאישור בעל הפרויקט והממונה על הפרטיות]", notice)

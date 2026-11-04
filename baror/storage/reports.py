@@ -38,7 +38,7 @@ from baror.domain import reports as schedule
 from baror.storage import audit, chief, db
 from baror.storage.chief import MIN_GROUP
 
-__all__ = ["compute", "generate", "generate_due", "pending_deliveries", "report_pdf", "mark_sent", "mark_failed",
+__all__ = ["compute", "generate", "generate_due", "adhoc_report", "pending_deliveries", "report_pdf", "mark_sent", "mark_failed",
            "mail_state", "set_mail_enabled", "RETRY_DAYS"]
 
 RETRY_DAYS = 14          # a report older than this is no longer retried by e-mail (it stays on the chief's screen)
@@ -234,6 +234,32 @@ def generate(db_path, kind: str, start: dt.date, end: dt.date, *, grade: Grader,
                   "WHERE role='chief' AND active=1", (rid,))
         audit.record(c, actor_id=None, action="report.generate", now=now)
         return rid
+
+
+def adhoc_report(db_path, actor_id, start: dt.date, end: dt.date, *, kind: str, grade: Grader, render: Renderer,
+                 today: dt.date, now: dt.datetime | None = None) -> bytes:
+    """A report generated ON DEMAND for the chief and returned as bytes: NOTHING is stored (no ``reports`` row, no
+    delivery, no mail). ``kind`` is 'trailing' (the last 30 days: ``start``/``end`` must be exactly
+    ``baror.domain.reports.trailing_period(today)``) or 'range' (a chosen range, checked by ``validate_range``: a bad range
+    raises ValidationError REPORT_RANGE_ORDER / _FUTURE / _TOO_LONG). CHIEF ONLY through ``chief._run`` (role and ``active``
+    re-read inside the transaction; anybody else gets AuthError and an existing account that is refused leaves a 'denied'
+    ``chief.report_range`` row). The numbers come from ``compute`` unchanged, so every privacy rule of the stored reports
+    applies identically (aggregates only, no names, groups under 5 hidden, no total for everyone, latest result per cadet
+    per period). Exactly one ``chief.report_range`` audit row per successful generation; a refused or invalid request
+    leaves no 'ok' row. Input is checked after the authorisation, so a refusal never depends on it."""
+    def body(c, actor, _platoon, _cadet):
+        if kind not in schedule.ADHOC_KINDS:
+            raise ValueError("unknown on-demand report type")
+        if kind == schedule.RANGE:
+            s, e = schedule.validate_range(start, end, today)
+        else:
+            s, e = schedule.trailing_period(today)
+            if (start, end) != (s, e):
+                raise ValueError("a trailing report covers exactly the last 30 days")
+        pdf = render(compute(c, kind, s, e, grade, today))
+        audit.record(c, actor_id=actor, action="chief.report_range", now=now)
+        return (bytes(pdf),)                      # a tuple: an empty file must not look like "not visible" to _run
+    return chief._run(db_path, actor_id, "chief.report_range", None, None, now, body)[0]
 
 
 def generate_due(db_path, today: dt.date, *, grade: Grader, render: Renderer,

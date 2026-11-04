@@ -1,4 +1,4 @@
-"""The aggregated period report (weekly / monthly) as a PDF: Hebrew, right to left, embedded Heebo, searchable. Standard
+"""The aggregated period report (weekly / monthly, and the on-demand 'trailing' / 'range' kinds) as a PDF: Hebrew, right to left, embedded Heebo, searchable. Standard
 library only; never imports streamlit. It reuses the writer of ``baror.export_pdf`` (font, bidi, tables, paging) and adds
 only the content.
 
@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import datetime as dt
 
+from baror.domain.reports import ADHOC_KINDS, ALL_KINDS
 from baror.domain.scoring import format_deciseconds
 from baror.export_pdf import MUTED, OLIVE, _Doc, _date, load_font
 from baror.messages_he import APP_NAME, month_label, t
@@ -88,6 +89,8 @@ def _headline(doc: _Doc, block: dict) -> None:
 
 def build_report_pdf(data: dict, *, generated: dt.date) -> bytes:
     kind, period = data["kind"], data["period"]
+    if kind not in ALL_KINDS:                         # weekly, monthly, and the on-demand trailing / range
+        raise ValueError(f"unknown report type {kind!r}")
     start, end = dt.date.fromisoformat(period["start"]), dt.date.fromisoformat(period["end"])
     doc = _Doc(load_font())
     title = t("report_pdf_title_" + kind)
@@ -123,6 +126,8 @@ def build_report_pdf(data: dict, *, generated: dt.date) -> bytes:
     notes = [t("report_note_cohort"), t("report_note_latest"), t("report_note_" + kind), t("report_note_small"),
              t("report_note_change", start=_date(period["previous_start"]), end=_date(period["previous_end"])),
              t("report_note_acc"), t("report_note_grading")]
+    if kind in ADHOC_KINDS:
+        notes.append(t("report_adhoc_note"))
     for note in notes:
         doc.paragraph(note, 9, color=MUTED, gap=3)
     return doc.finish(title, generated)

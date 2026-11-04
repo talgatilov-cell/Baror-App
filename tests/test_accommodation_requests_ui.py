@@ -14,8 +14,8 @@ from baror import config
 from baror.messages_he import t
 from baror.storage import accommodations, db
 from baror.ui import accom
-from tests.test_app_staff import StaffBase, audit_rows, md
 from tests.test_app import texts
+from tests.test_app_staff import StaffBase, audit_rows, md
 
 _REJECT_BODY = accom.reject_request_dialog.__wrapped__
 _FLAG = "_test_reject_open"
@@ -55,6 +55,17 @@ class Base(StaffBase):
         rid = rid or self.req
         return next(r["approval"] for r in accommodations.list_own(self.path, self.ca) if r["id"] == rid)
 
+    def chief_card(self, name):
+        """The chief on the requests page with one card open (a card opens by itself when it is the only kind waiting;
+        otherwise the cards are collapsed until pressed)."""
+        return self.chief_requests(card=name)
+
+    def instructor_card(self):
+        """The instructor signed in with Alef-A's card open (a card shows the name only until the name is pressed)."""
+        at = self.sign_in("ins@example.com")
+        at.button(key=f"ins_open_{self.ca}").click()
+        return at.run()
+
     def cadet_tab(self, email="ca@example.com"):
         at = self.go(self.sign_in(email), "more")
         at.segmented_control(key="more_tab").set_value("accommodations")
@@ -92,10 +103,15 @@ class Wording(unittest.TestCase):
 
 
 class RequestList(Base):
+    def test_a_lone_waiting_request_opens_by_itself_with_its_own_title(self):
+        at = self.chief_requests()                                              # only the cadet's request waits
+        self.assertEqual(at.session_state["_req_open"], "approve")
+        self.assertIn(f"req_ok_{self.req}", [b.key for b in at.button])
+        self.assertIn("**" + t("req_acc_card_title") + "**", [str(m.value) for m in at.markdown])
+
     def test_the_chief_sees_the_cadets_request_labelled_as_the_cadets_with_two_decision_buttons(self):
-        at = self.sign_in("boss@example.com")
+        at = self.chief_card("approve")
         self.assertFalse(at.exception)
-        self.assertIn(t("chief_requests_title"), [x.value for x in at.subheader])
         body = md(at)
         self.assertIn(t("chief_requests_one"), body)
         self.assertIn(t("acc_source_cadet"), body)
@@ -107,17 +123,21 @@ class RequestList(Base):
         self.assertEqual(by_key[f"req_no_{self.req}"], t("btn_reject_request"))
         self.assertNotIn(f"req_ok_{self.rec_ins}", by_key, "an instructor's record is approved at once and never listed")
 
-    def test_the_request_section_is_above_the_deletion_section(self):
-        subs = [x.value for x in self.sign_in("boss@example.com").subheader]
-        self.assertLess(subs.index(t("chief_requests_title")), subs.index(t("chief_pending_title")))
+    def test_the_approval_card_comes_before_the_deletion_card_and_both_start_closed(self):
+        accom.apply_request_delete(self.cfg(), self.ins, self.rec_ins)         # two kinds wait: nothing opens by itself
+        at = self.chief_requests()
+        keys = [b.key for b in at.button if b.key.startswith("reqcard_btn_")]
+        self.assertLess(keys.index("reqcard_btn_approve"), keys.index("reqcard_btn_delete"))
+        self.assertFalse([b.key for b in at.button if b.key.startswith(("req_ok_", "pend_ok_"))])
 
     def test_no_request_is_a_designed_empty_state(self):
         accommodations.approve_request(self.path, self.boss, self.req)
-        self.assertIn(t("chief_requests_none"), texts(self.sign_in("boss@example.com")))
+        self.assertIn(t("chief_requests_none"), texts(self.chief_card("approve")))
 
     def test_an_instructor_and_a_cadet_do_not_see_the_request_section_or_any_decision_button(self):
-        at = self.sign_in("ins@example.com")
-        self.assertNotIn(t("chief_requests_title"), texts(at))
+        at = self.instructor_card()
+        # the section HEADING: the word "בקשות" is also part of other copy ("עוד לא נשלחו בקשות")
+        self.assertNotIn(t("req_section_title"), [x.value for x in at.subheader])
         keys = [b.key for b in at.button]
         self.assertFalse([k for k in keys if k.startswith(("req_", "dec_", "rej_"))])
         self.assertIn(t("acc_approval_pending"), md(at), "the instructor sees the state, not the buttons")
@@ -131,7 +151,7 @@ class RequestList(Base):
 
 class Decisions(Base):
     def test_approving_is_one_tap_and_the_record_is_active_in_the_cadets_own_tab(self):
-        at = self.sign_in("boss@example.com")
+        at = self.chief_card("approve")
         at.button(key=f"req_ok_{self.req}").click()
         at.run()
         self.assertFalse(at.exception)
@@ -148,7 +168,7 @@ class Decisions(Base):
         self.assertEqual(body.count(t("acc_status_active")), 1, "only the instructor's record is in effect")
 
     def test_rejecting_asks_once_and_keeps_the_record_visible_as_rejected_to_the_cadet(self):
-        at = self.sign_in("boss@example.com")
+        at = self.chief_card("approve")
         at.button(key=f"req_no_{self.req}").click()
         at.run()
         self.assertFalse(at.exception)
@@ -170,7 +190,7 @@ class Decisions(Base):
         p = mock.patch.object(st, "rerun", lambda scope="app": real_rerun())
         p.start()
         self.addCleanup(p.stop)
-        at = self.sign_in("boss@example.com")
+        at = self.chief_card("approve")
         at.button(key=f"req_no_{self.req}").click()
         at.run()
         self.assertIn(f"rej_ok_{self.req}", [b.key for b in at.button])
@@ -182,7 +202,11 @@ class Decisions(Base):
         self.assertEqual(self.approval(), "rejected")
 
     def test_one_audited_read_per_load_and_one_row_per_action(self):
-        at = self.sign_in("boss@example.com")
+        accom.apply_request_delete(self.cfg(), self.ins, self.rec_ins)         # two kinds wait: every card starts closed
+        at = self.chief_requests()
+        self.assertEqual(audit_rows(self.path, "accommodation.pending_requests"), [], "a closed card reads nothing")
+        at.button(key="reqcard_btn_approve").click()
+        at.run()
         at.run()
         at.run()
         self.assertEqual(len(audit_rows(self.path, "accommodation.pending_requests")), 1, "reruns do not read again")
@@ -193,7 +217,7 @@ class Decisions(Base):
         self.assertEqual(len(audit_rows(self.path, "accommodation.approve")), 1)
 
     def test_a_decision_taken_elsewhere_is_a_visible_error_not_a_crash(self):
-        at = self.sign_in("boss@example.com")
+        at = self.chief_card("approve")
         accommodations.reject_request(self.path, self.boss, self.req)         # decided in another session
         at.button(key=f"req_ok_{self.req}").click()
         at.run()
@@ -206,9 +230,7 @@ class Decisions(Base):
 class DeletionRequestsStayApart(Base):
     def test_a_deletion_request_has_its_own_words_and_the_flow_still_works(self):
         accom.apply_request_delete(self.cfg(), self.ins, self.rec_ins)
-        at = self.sign_in("boss@example.com")
-        subs = [x.value for x in at.subheader]
-        self.assertIn(t("chief_pending_title"), subs)
+        at = self.chief_card("delete")
         body = md(at)
         self.assertIn(t("chief_pending_one"), body)
         self.assertIn(t("acc_pending_chief"), body)
@@ -216,7 +238,12 @@ class DeletionRequestsStayApart(Base):
         labels = {b.key: b.label for b in at.button}
         self.assertEqual(labels[f"pend_ok_{self.rec_ins}"], t("btn_approve_delete"))
         self.assertEqual(labels[f"pend_no_{self.rec_ins}"], t("btn_reject_delete"))
-        self.assertEqual(body.count(t("acc_approval_pending")), 1, "only the cadet's request, not the deletion card")
+        self.assertEqual(body.count(t("acc_approval_pending")), 0, "the cadet's request sits in the other, closed card")
+        at.button(key="reqcard_btn_approve").click()                     # one card open at a time: this closes the deletion card
+        at.run()
+        self.assertEqual(md(at).count(t("acc_approval_pending")), 1, "only the cadet's request, not the deletion card")
+        at.button(key="reqcard_btn_delete").click()
+        at.run()
         at.button(key=f"pend_no_{self.rec_ins}").click()
         at.run()
         self.assertEqual(at.success[0].value, t("acc_rejected"))
@@ -228,9 +255,13 @@ class DeletionRequestsStayApart(Base):
 
     def test_the_deletion_card_of_a_pending_record_does_not_wear_the_approval_badge(self):
         accom.apply_request_delete(self.cfg(), self.ins, self.req)
-        body = md(self.sign_in("boss@example.com"))
-        self.assertEqual(body.count(t("acc_approval_pending")), 1, "once in the request list, never in the deletion card")
+        at = self.chief_card("delete")
+        body = md(at)
+        self.assertEqual(body.count(t("acc_approval_pending")), 0, "never in the deletion card")
         self.assertEqual(body.count(t("acc_pending_chief")), 1)
+        at.button(key="reqcard_btn_approve").click()
+        at.run()
+        self.assertEqual(md(at).count(t("acc_approval_pending")), 1, "once in the request list")
 
 
 class OpenedCadet(Base):
@@ -255,8 +286,8 @@ class OpenedCadet(Base):
         self.assertEqual(at.success[0].value, t("acc_request_approved"), at.success[0].value)
         self.assertNotIn(f"dec_ok_{self.req}", [b.key for b in at.button])
         self.assertNotIn(f"req_ok_{self.req}", [b.key for b in at.button])
-        self.assertEqual(md(at).count(t("acc_approval_pending")), 0)
-        self.assertIn(t("acc_active_marker"), texts(at) + md(at), "the row marker follows the approval, no stale list")
+        self.assertEqual(md(at).count(t("acc_approval_pending")), 0, "the opened cadet follows the approval, no stale copy")
+        self.assertIn(t("acc_status_active"), md(at))
 
     def test_rejecting_from_the_opened_cadet_opens_the_confirmation_and_changes_nothing_yet(self):
         at = self.open_cadet()
@@ -265,21 +296,21 @@ class OpenedCadet(Base):
         self.assertFalse(at.exception)
         self.assertEqual(self.approval(), "pending")
 
-    def test_the_latest_values_are_not_drawn_twice_when_a_row_is_open(self):
+    def test_a_closed_row_shows_no_values_and_an_open_one_shows_the_history_card_once(self):
         closed = self.sign_in("boss@example.com")
         closed.segmented_control(key="chief_platoon").set_value(self.pa)
         closed.run()
         row_line = lambda a: [m.value for m in a.markdown if str(m.value).startswith("**" + t("test_run") + "**")]
-        self.assertEqual(len(row_line(closed)), 1)
+        self.assertEqual(len(row_line(closed)), 0)
         at = self.open_cadet()
-        self.assertEqual(len(row_line(at)), 1, "the row's own line is replaced by the details, which carry the history card")
+        self.assertEqual(len(row_line(at)), 1, "the details carry the history card, once")
 
     def test_a_rejected_record_renders_everywhere_without_a_crash(self):
         accommodations.reject_request(self.path, self.boss, self.req)
         for email in ("ins@example.com", "boss@example.com"):
             at = self.sign_in(email)
             self.assertFalse(at.exception, email)
-        self.assertIn(t("acc_approval_rejected"), md(self.sign_in("ins@example.com")))
+        self.assertIn(t("acc_approval_rejected"), md(self.instructor_card()))
         self.assertIn(t("acc_approval_rejected"), md(self.open_cadet()))
         self.assertFalse(self.cadet_tab().exception)
         with db.reader(self.path) as c:

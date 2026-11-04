@@ -1,0 +1,47 @@
+/* Baror App stylesheet, part 2: the admin screen, the accounts panel, the cadet cards, the join link box and the top-bar
+   bell. Loaded by baror/ui/theme.py right AFTER app.css (the two are one stylesheet), so the design tokens (--bg, --ink,
+   --line, --olive, --danger, --radius, --tap, --gap ...) are the ones defined at the top of app.css.
+
+   Same rules as app.css (CLAUDE.md, tests/test_app_admin.py checks them): logical properties only, selectors are the
+   .st-key-NAME hooks plus the data-testid attributes stPopoverButton, stPopoverBody, stElementContainer, stText and
+   stCode, no hashed emotion classes, no !important.
+     admin_page / accounts_panel / adm_cadets   the three sections; one 8 px rhythm
+     admin_banner                                the one-line purpose note under the title (same look as staff_banner)
+     acct_table_box                              the account table: 1 px --line border, rounded
+     acct_edit                                   the chosen account; its first line (the name) is the heading
+     adm_cadet_N / adm_card_list                 one bordered card per cadet; first line = the name (st.text)
+     adm_reqcard / adm_new_platoon / join_box_N  the requests card, the new-platoon form, the join link box
+     bell                                        the popover in the top bar; its body is drawn by Streamlit in a floating
+                                                 layer OUTSIDE the fixed bar, so only its width is limited here
+   Touch targets stay 48 px (buttons, selects, checkboxes, the popover button); the destructive confirm buttons of the
+   dialogs (keys starting del_ok_) get the danger look from app.css. */
+
+/* ---- sections ------------------------------------------------------------------------------------------------ */
+.st-key-admin_page,.st-key-accounts_panel,.st-key-adm_cadets,.st-key-adm_new_platoon{gap:var(--gap)}
+.st-key-adm_card_list{gap:var(--gap)}
+.st-key-admin_banner{box-sizing:border-box; min-height:3rem; padding:.75rem 1rem; border-radius:var(--radius);
+  background:var(--bg2); border-inline-start:4px solid var(--olive)}
+.st-key-admin_banner > *,.st-key-admin_banner [data-testid="stMarkdown"]{flex:none; height:auto}
+.st-key-admin_banner p{margin:0; color:var(--ink)}
+
+/* ---- the account table ---------------------------------------------------------------------------------------- */
+.st-key-acct_table_box{border:1px solid var(--line); border-radius:var(--radius); overflow:hidden}
+/* the chosen account and the cadet cards: the first line is the name, typed by a person and shown with st.text */
+.st-key-acct_edit{gap:var(--gap)}
+.st-key-acct_edit > [data-testid="stElementContainer"]:first-child [data-testid="stText"],
+[class*="st-key-adm_cadet_"] > [data-testid="stElementContainer"]:first-child [data-testid="stText"]{
+  font-weight:800; font-size:1.125rem}
+[class*="st-key-adm_cadet_"]{gap:var(--gap)}
+/* long e-mail addresses wrap instead of pushing the card wider than the screen */
+.st-key-acct_edit [data-testid="stText"],[class*="st-key-adm_cadet_"] [data-testid="stText"]{overflow-wrap:anywhere}
+/* destructive text button (release the e-mail): the danger token on sand is 6.59:1 */
+.stApp [class*="st-key-release_open_"] button{color:var(--danger)}
+
+/* ---- the join link box ---------------------------------------------------------------------------------------- */
+[class*="st-key-join_box_"]{gap:var(--gap)}
+[class*="st-key-join_box_"] [data-testid="stCode"]{overflow-wrap:anywhere}
+
+/* ---- top-bar bell: a 48 px popover button; the floating body never wider than the viewport ---------------------- */
+.st-key-top_bar [data-testid="stPopoverButton"]{min-height:var(--tap); inline-size:100%; padding-inline:.5rem; font-weight:700}
+[data-testid="stPopoverBody"]{box-sizing:border-box; max-inline-size:min(24rem, calc(100vw - 2rem))}
+[data-testid="stPopoverBody"] .stButton button{min-height:var(--tap)}

@@ -12,9 +12,9 @@ What "6 months after the course" means here (assumptions listed in ADR-0002, to 
 
 What the job does for each due cadet, in ONE transaction with secure_delete on:
 1. copies gender / is_km / platoon to the cadet's ``pseudonyms`` row (the only attributes the overviews need);
-2. deletes the consumed allowlist entry (it holds the e-mail);
-3. deletes the ``users`` row, i.e. name, e-mail, password hash and the pseudonym link (sessions cascade; audit rows that
-   mention the account become NULL through their ON DELETE SET NULL foreign keys). The cadet's ACCOMMODATIONS
+2. deletes the ``users`` row, i.e. name, e-mail, password hash and the pseudonym link (sessions and change requests
+   about the cadet cascade; audit rows that mention the account become NULL through their ON DELETE SET NULL foreign
+   keys). The cadet's ACCOMMODATIONS
    (הקלות ופטורים, schema v6) cascade with the row and are deleted too, notes included: they describe a person and may be
    health related, so unlike the results they are not kept in pseudonymised form (ADR-0003).
 The results stay, under the pseudonym. Afterwards ``VACUUM`` and a WAL truncate remove the freed bytes from the file.
@@ -111,7 +111,6 @@ def run(db_path, *, today: dt.date | None = None, now: dt.datetime | None = None
         for r in groups["due"]:
             c.execute("UPDATE pseudonyms SET gender=?, is_km=?, platoon_id=?, deidentified_at=? WHERE pseudonym=?",
                       (r["gender"], r["is_km"], r["platoon_id"], stamp, r["pseudonym"]))
-            c.execute("DELETE FROM allowed_emails WHERE used_by=? OR email=?", (r["id"], r["email"]))
             c.execute("DELETE FROM users WHERE id=?", (r["id"],))
         if groups["due"]:
             audit.record(c, actor_id=None, action="retention.run", now=now_utc)

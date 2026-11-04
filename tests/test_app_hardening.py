@@ -11,10 +11,10 @@ from unittest import mock
 
 from streamlit.testing.v1 import AppTest
 
-from baror.auth import sessions
+from baror.auth import service, sessions
 from baror.logging_setup import JsonFormatter
 from baror.messages_he import ERRORS, t
-from baror.storage import allowlist, db, repo
+from baror.storage import db, repo
 from baror.ui import personal
 from tests.test_app import APP, PW, AppCase, btn, texts
 
@@ -96,7 +96,6 @@ class StartupProblems(AppCase):
 
 class AuditEventsCarryNoSecrets(AppCase):
     def test_a_whole_flow_leaves_events_without_raw_email_password_or_token(self):
-        allowlist.add_entry(self.path, "noa@example.com")
         self.cadet("dana@example.com", "Dana")
         records = []
 
@@ -113,7 +112,8 @@ class AuditEventsCarryNoSecrets(AppCase):
         self.sign_in("dana@example.com", "wrong password")
         at = self.sign_in("dana@example.com", PW)
         token = self.set_cookie.call_args.args[0]
-        self.register("unlisted@example.com", gender="gender_male", password="a secret pw 123")
+        service.register(self.path, email="unlisted@example.com", name="U", gender="M", is_km=False, password=PW)
+        self.register("unlisted@example.com", gender="gender_male", password="a secret pw 123")     # already used: refused
         self.register("noa@example.com", gender="gender_female", password="another secret 99")
         at = self.profile(at)
         btn(at, t("btn_logout")).click()
@@ -128,7 +128,7 @@ class AuditEventsCarryNoSecrets(AppCase):
                        "a secret pw 123", "another secret 99", token, "example.com"):
             self.assertNotIn(secret, blob, f"{secret!r} appears in the audit log")
         refused = [l for l in lines if (l.get("event") or l.get("message")) == "register_refused"][0]
-        self.assertEqual(refused.get("f_reason") or refused.get("reason"), "not_listed", "the operator can see why")
+        self.assertEqual(refused.get("f_reason") or refused.get("reason"), "account exists", "the operator can see why")
         failed = [l for l in lines if (l.get("event") or l.get("message")) == "login_failed"][0]
         self.assertTrue(failed.get("email"), "a keyed token of the e-mail is kept so repeated failures can be correlated")
         self.assertNotIn("@", failed["email"])

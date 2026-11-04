@@ -13,17 +13,71 @@ never imports streamlit. Israel's week is Sunday to Thursday, the weekend is Fri
 ``reports_due(today)`` answers for one calendar date only; a missed day is caught up by asking for each missed date in turn
 (``scripts/generate_reports.py --since``). Generation stores at most one report per type and period start, so asking twice
 is harmless.
+
+ON-DEMAND reports (never stored, see ``baror.storage.reports.adhoc_report``):
+* TRAILING: the last 30 days, ``today - 30 days`` up to and including ``today`` (31 calendar days).
+* RANGE: a start and an end chosen by the chief. ``validate_range`` refuses an end before the start (REPORT_RANGE_ORDER),
+  an end after today (REPORT_RANGE_FUTURE) and a range longer than 5 calendar months (REPORT_RANGE_TOO_LONG): the last
+  allowed end is ``start + 5 calendar months - 1 day`` (the day-of-month is clamped to the length of the target month, so
+  31 Jan + 5 months is 30 Jun and the last end is 29 Jun).
+* The PREVIOUS period of both is the same number of days immediately before the start.
 """
 from __future__ import annotations
 
 import calendar
 import datetime as dt
 
+from baror.errors import ValidationError
+
 WEEKLY, MONTHLY = "weekly", "monthly"
-KINDS = (WEEKLY, MONTHLY)
+KINDS = (WEEKLY, MONTHLY)                        # the STORED kinds (reports.period_type CHECK allows only these)
+TRAILING, RANGE = "trailing", "range"
+ADHOC_KINDS = (TRAILING, RANGE)                  # generated on demand, never stored
+ALL_KINDS = KINDS + ADHOC_KINDS
+TRAILING_DAYS = 30
+MAX_RANGE_MONTHS = 5
 THURSDAY, FRIDAY, SATURDAY = 3, 4, 5             # datetime.date.weekday(): Monday is 0
 
 Period = tuple[dt.date, dt.date]                 # first and last day, both included
+
+
+def _check_date(value) -> dt.date:
+    if isinstance(value, dt.datetime) or not isinstance(value, dt.date):
+        raise ValidationError("INVALID_DATE", detail="a plain date is required")
+    return value
+
+
+def add_months(day: dt.date, months: int) -> dt.date:
+    """``day`` moved forward by whole calendar months; the day-of-month is clamped to the target month's length."""
+    index = day.year * 12 + (day.month - 1) + months
+    year, month = divmod(index, 12)
+    month += 1
+    return dt.date(year, month, min(day.day, calendar.monthrange(year, month)[1]))
+
+
+def trailing_period(today: dt.date) -> Period:
+    """The last 30 days: ``today - 30 days`` .. ``today``."""
+    today = _check_date(today)
+    return today - dt.timedelta(days=TRAILING_DAYS), today
+
+
+def last_allowed_end(start: dt.date) -> dt.date:
+    """The latest end a range starting on ``start`` may have (5 calendar months, less one day)."""
+    return add_months(_check_date(start), MAX_RANGE_MONTHS) - dt.timedelta(days=1)
+
+
+def validate_range(start: dt.date, end: dt.date, today: dt.date) -> Period:
+    """Check a chosen range and return ``(start, end)``; otherwise raise ``ValidationError`` with the key
+    REPORT_RANGE_ORDER (start after end), REPORT_RANGE_FUTURE (end after today) or REPORT_RANGE_TOO_LONG (more than 5
+    calendar months). A value that is not a plain date raises INVALID_DATE. Checked in that order."""
+    start, end, today = _check_date(start), _check_date(end), _check_date(today)
+    if start > end:
+        raise ValidationError("REPORT_RANGE_ORDER", detail="start is after end")
+    if end > today:
+        raise ValidationError("REPORT_RANGE_FUTURE", detail="end is in the future")
+    if end > last_allowed_end(start):
+        raise ValidationError("REPORT_RANGE_TOO_LONG", detail="range is longer than 5 calendar months")
+    return start, end
 
 
 def weekly_period(thursday: dt.date) -> Period:
@@ -52,6 +106,12 @@ def previous_period(kind: str, start: dt.date, end: dt.date) -> Period:
     if kind == MONTHLY:
         before = start - dt.timedelta(days=1)
         return monthly_period(before.year, before.month)
+    if kind in ADHOC_KINDS:                          # the same number of days, immediately before the start
+        if end < start:
+            raise ValueError("empty period")
+        days = (end - start).days + 1
+        before_end = start - dt.timedelta(days=1)
+        return before_end - dt.timedelta(days=days - 1), before_end
     raise ValueError(f"unknown report type {kind!r}")
 
 

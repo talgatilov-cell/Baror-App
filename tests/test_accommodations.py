@@ -98,7 +98,7 @@ class Base(V2Case):
 
 class AddMatrix(Base):
     def test_who_may_add_for_whom_and_the_source_label(self):
-        cases = [(self.ca, self.ca, "cadet"), (self.ins, self.ca, "instructor"), (self.adm, self.ca, "admin"),
+        cases = [(self.ca, self.ca, "cadet"), (self.ins, self.ca, "instructor"),
                  (self.boss, self.ca, "chief"), (self.boss, self.cb, "chief"), (self.boss, self.cn, "chief"),
                  (self.cb, self.cb, "cadet")]
         for actor, cadet, source in cases:
@@ -107,11 +107,19 @@ class AddMatrix(Base):
             self.assertEqual((row[2], row[3]), (source, actor))
         self.assertEqual(self.n_audit("accommodation.add", "ok"), len(cases))
 
+    def test_an_admin_has_no_accommodation_rights_at_all(self):
+        # schema v9: admin = permissions and cadet management only (it used to be able to add for a granted platoon)
+        for actor in (self.adm, self.adm0):
+            with self.assertRaises(AuthError):
+                self.add(actor, self.ca)
+        self.assertEqual(self.rows(), [])
+        self.assertEqual(self.n_audit("accommodation.add", "denied"), 2)
+
     def test_a_cadet_cannot_record_for_somebody_else_nor_a_staff_account_for_a_cadet_outside_their_scope(self):
         for actor, cadet, exc in [(self.ca, self.cb, AuthError), (self.ca, self.cn, AuthError),
                                   (self.ins, self.cb, NotFoundError), (self.ins, self.cn, NotFoundError),
-                                  (self.ins0, self.ca, NotFoundError), (self.adm0, self.ca, NotFoundError),
-                                  (self.adm, self.cb, NotFoundError)]:
+                                  (self.ins0, self.ca, NotFoundError), (self.adm0, self.ca, AuthError),
+                                  (self.adm, self.cb, AuthError)]:
             with self.assertRaises(exc, msg=(actor, cadet)):
                 self.add(actor, cadet)
         self.assertEqual(self.rows(), [])
@@ -148,9 +156,11 @@ class AddMatrix(Base):
             self.add(self.ca, self.ca)
 
     def test_a_staff_role_cannot_record_for_itself_as_if_it_were_a_cadet(self):
-        for staff in (self.ins, self.adm, self.boss):
+        for staff in (self.ins, self.boss):
             with self.assertRaises(NotFoundError):
                 self.add(staff, staff)
+        with self.assertRaises(AuthError):               # an admin is refused outright (v9)
+            self.add(self.adm, self.adm)
 
     def test_validation_happens_after_authorisation_and_stores_nothing(self):
         with self.assertRaises(ValidationError):
@@ -216,18 +226,19 @@ class DeleteFlow(Base):
         self.rid = self.add(self.ca, self.ca)
         self.rid_b = self.add(self.cb, self.cb)
 
-    def test_instructor_and_granted_admin_may_only_request(self):
-        for staff in (self.ins, self.adm):
-            acc.request_delete(self.path, staff, self.rid, now=NOW)
-            self.assertEqual(len(self.rows(self.ca)), 1, "a request deletes nothing")
+    def test_instructor_may_only_request_and_an_admin_may_not_even_that(self):
+        acc.request_delete(self.path, self.ins, self.rid, now=NOW)
+        self.assertEqual(len(self.rows(self.ca)), 1, "a request deletes nothing")
+        with self.assertRaises(AuthError):
+            acc.request_delete(self.path, self.adm, self.rid, now=NOW)
         row = self.rows(self.ca)[0]
         self.assertIsNotNone(row[4])
-        self.assertEqual(row[5], self.ins, "the first request keeps its requester")
-        self.assertEqual(self.n_audit("accommodation.delete_request", "ok"), 2)
+        self.assertEqual(row[5], self.ins, "the request keeps its requester")
+        self.assertEqual(self.n_audit("accommodation.delete_request", "ok"), 1)
 
     def test_request_is_refused_for_everybody_else(self):
         for actor, exc in [(self.ca, AuthError), (self.cb, AuthError), (self.boss, AuthError), (self.dead, AuthError),
-                           (self.ins, NotFoundError), (self.ins0, NotFoundError), (self.adm0, NotFoundError)]:
+                           (self.ins, NotFoundError), (self.ins0, NotFoundError), (self.adm0, AuthError)]:
             target = self.rid_b if actor == self.ins else self.rid
             with self.assertRaises(exc, msg=actor):
                 acc.request_delete(self.path, actor, target, now=NOW)

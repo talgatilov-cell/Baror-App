@@ -13,6 +13,7 @@ Problems that can be listed together are reported together in one ``ConfigError`
 """
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import tempfile
@@ -24,6 +25,7 @@ from typing import Any
 from baror.errors import ConfigError, StorageError
 from baror.storage import db
 
+log = logging.getLogger("baror.startup")
 MIN_FREE_BYTES = 10 * 1024 * 1024
 MAINTENANCE_FLAG = "MAINTENANCE"
 
@@ -102,7 +104,17 @@ def run_startup_checks(cfg: Any, *, init: bool = True) -> dict[str, Any]:
     version = db.user_version(path)
     if version != db.LATEST_VERSION:
         raise StorageError(detail=f"database schema is v{version}, this app needs v{db.LATEST_VERSION}")
+    log.info("registration_state %s", registration_state(cfg))
     return {"schema": version}
+
+
+def registration_state(cfg: Any) -> dict[str, Any]:
+    """Operator summary of the registration settings, safe to log: booleans and the cap, never the join-link secret or
+    the public address. Missing attributes (a duck-typed config in tests) read as the defaults."""
+    return {"open": bool(getattr(cfg, "registration_open", True)),
+            "signup_cap_per_hour": getattr(cfg, "signup_cap_per_hour", None),
+            "join_links": getattr(cfg, "join_link_secret", None) is not None,
+            "public_url_set": getattr(cfg, "public_url", None) is not None}
 
 
 def maintenance_active(db_path: str | os.PathLike, env: dict | None = None) -> bool:

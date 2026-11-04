@@ -3,8 +3,9 @@
 Authorisation is enforced HERE, per call, from the database -- the caller is never trusted:
 * The actor is identified only by ``actor_id``; the role and ``active`` flag are re-read from ``users`` inside the
   transaction on every call (no role cached in a session or passed in).
-* Access = actor is ``active`` AND role in (instructor, admin) AND a row exists in ``instructor_platoons`` for the
-  platoon in question. An admin has NO implicit access; admin needs explicit grants, which are audited.
+* Access = actor is ``active`` AND role instructor AND a row exists in ``instructor_platoons`` for the platoon in
+  question (schema v9: exactly one platoon per instructor). An admin has NO access at all (permissions and cadet
+  management only); a chief reads through ``baror.storage.chief``.
 * The authorisation predicate is part of the data SELECT itself (not only a pre-check), so a logic slip in the
   pre-check still returns no rows. Pre-check + data + audit row run in ONE BEGIN IMMEDIATE transaction (no TOCTOU).
 * Targets must be ``role='cadet' AND active=1``. Staff accounts and deactivated cadets are not readable.
@@ -27,7 +28,7 @@ from baror.storage.summaries import fold_summary
 
 __all__ = ["my_platoons", "list_platoon_members", "cohort_summary", "get_cadet_results", "cadet_history"]
 
-_STAFF = "('instructor','admin')"
+_STAFF = "('instructor')"       # schema v9: admin has no cohort rights at all (permissions and cadet management only)
 # True when :actor may read platoon :platoon. Used as a pre-check AND embedded in every data query.
 _GRANTED = (f"EXISTS (SELECT 1 FROM users a JOIN instructor_platoons ip ON ip.instructor_id=a.id "
             f"WHERE a.id=:actor AND a.active=1 AND a.role IN {_STAFF} AND ip.platoon_id=:platoon)")
@@ -40,8 +41,8 @@ def _id(v) -> int | None:
 def _denial(c, actor):
     """Return the exception to raise, or None if the actor may use the cohort view at all."""
     a = c.execute("SELECT role,active FROM users WHERE id=?", (actor,)).fetchone() if actor else None
-    if a is None or not a["active"] or a["role"] not in ("instructor", "admin"):
-        return AuthError("NOT_AUTHORISED", detail="cohort view requires an active instructor/admin")
+    if a is None or not a["active"] or a["role"] != "instructor":
+        return AuthError("NOT_AUTHORISED", detail="cohort view requires an active instructor")
     return None
 
 

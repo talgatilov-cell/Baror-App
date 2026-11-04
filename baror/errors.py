@@ -77,11 +77,24 @@ class ConflictError(BarorError):
 
 
 class RegistrationDeniedError(BarorError):
-    """Registration refused. ONE class and ONE message for 'e-mail not on the allowlist', 'allowlist entry already
-    used', 'account already exists' and 'malformed e-mail', so the form is not a list-membership oracle. The reason
-    goes to ``detail`` (server log only, never to the user, and never contains the e-mail)."""
+    """Registration refused. ONE class and ONE message for 'account already exists' (and 'released address') and
+    'malformed e-mail', so the form is not an account-existence oracle. The reason goes to ``detail`` (server log only,
+    never to the user, and never contains the e-mail)."""
     code, severity, log_level = "E-REGISTER", WARNING, logging.INFO
     message_key = "REGISTRATION_DENIED"
+
+
+class SignupBusyError(BarorError):
+    """The hourly sign-up cap (``BAROR_SIGNUP_CAP_PER_HOUR``) is used up, or another sign-up won the last place. Says
+    nothing about the e-mail or any account, so it is safe to show; the person tries again later."""
+    code, severity, log_level = "E-SIGNUP-BUSY", WARNING, logging.WARNING
+    message_key = "SIGNUP_BUSY"
+
+
+class RegistrationClosedError(BarorError):
+    """The operator closed registration (``BAROR_REGISTRATION_OPEN=0``, the kill switch)."""
+    code, severity, log_level = "E-REG-CLOSED", INFO, logging.INFO
+    message_key = "REGISTRATION_CLOSED"
 
 
 class StorageError(BarorError):
@@ -111,6 +124,6 @@ class MaintenanceError(BarorError):
 
 ALL_ERRORS = (
     BarorError, ValidationError, AuthError, SessionExpiredError, RateLimitedError,
-    NotFoundError, ConflictError, RegistrationDeniedError, StorageError, CorruptedDataError, ConfigError,
-    MaintenanceError,
+    NotFoundError, ConflictError, RegistrationDeniedError, SignupBusyError, RegistrationClosedError, StorageError,
+    CorruptedDataError, ConfigError, MaintenanceError,
 )

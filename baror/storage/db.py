@@ -311,9 +311,81 @@ CREATE TABLE report_settings(
 INSERT INTO report_settings(id) VALUES(1)
 """
 
+# Schema v9: open registration and the company structure (owner decisions of 2026-11-04). ``users`` is NOT rebuilt.
+#   users.title            מ"פ/סמ"פ (chief: mp, smp) or מ"מ/מ"כ (instructor: mm, cmdr); NULL for everyone else and for a
+#                          legacy chief/instructor (shown as "title not set"). Unique among ACTIVE chiefs.
+#   platoons.join_epoch    bumping it revokes every signed join link of that platoon.
+#   signup_events          one row per sign-up, no personal data: the database-wide hourly sign-up cap. It survives the
+#                          deletion of an account (unlike a count over users) and is pruned on every sign-up.
+#   cadet_change_requests  what an instructor may ASK for: add a cadet who sits in another platoon (add_conflict), edit
+#                          (name/gender/km/platoon only), remove from the platoon (delete), and, for a מ"מ, nominate a
+#                          registered cadet as מ"כ of the own platoon (nominate_cmdr). A chief or admin decides.
+#   allowed_emails         DROPPED: there is no registration gate any more; roles are granted to existing accounts.
+#   instructor_platoons    ONE row per instructor (PRIMARY KEY instructor_id). Rows of a user who is not an instructor
+#                          and extra platoons are dropped, each one with an audit row ``migrate.v9_grant_dropped``
+#                          (written BEFORE the table is dropped). The kept platoon is the one with the earliest granted_at
+#                          (tie: lowest platoon id). ``is_mm`` mirrors ``users.title='mm' AND users.active=1`` and is what
+#                          makes "one מ"מ per platoon" a DATABASE rule (partial unique index); the storage layer keeps it
+#                          in step in the same transaction. A legacy instructor has title NULL and is_mm 0, and counts
+#                          toward the מ"כ limit until a title is set.
+# Existing users keep role and platoon; platoons already over the limits are left alone (limits apply to new grants).
+# Nothing here is rebuilt that other tables reference, so foreign keys stay ON. (No semicolons inside the strings:
+# ``_split`` cuts on them.)
+SCHEMA_V9 = """
+ALTER TABLE users ADD COLUMN title TEXT CHECK(title IS NULL OR (role='chief' AND title IN ('mp','smp')) OR (role='instructor' AND title IN ('mm','cmdr')));
+CREATE UNIQUE INDEX uq_users_chief_title ON users(title) WHERE role='chief' AND active=1 AND title IS NOT NULL;
+ALTER TABLE platoons ADD COLUMN join_epoch INTEGER NOT NULL DEFAULT 0 CHECK(join_epoch>=0);
+CREATE TABLE signup_events(
+ id INTEGER PRIMARY KEY,
+ ts TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')));
+CREATE INDEX idx_signup_events_ts ON signup_events(ts);
+CREATE TABLE cadet_change_requests(
+ id INTEGER PRIMARY KEY,
+ kind TEXT NOT NULL CHECK(kind IN ('add_conflict','edit','delete','nominate_cmdr')),
+ requested_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+ requested_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+ target_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ platoon_id INTEGER REFERENCES platoons(id) ON DELETE SET NULL,
+ new_name TEXT CHECK(new_name IS NULL OR length(trim(new_name)) BETWEEN 1 AND 80),
+ new_gender TEXT CHECK(new_gender IS NULL OR new_gender IN ('M','F')),
+ new_is_km INTEGER CHECK(new_is_km IS NULL OR new_is_km IN (0,1)),
+ new_platoon_id INTEGER REFERENCES platoons(id) ON DELETE SET NULL,
+ status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+ decided_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+ decided_at TEXT,
+ CHECK(kind<>'edit' OR new_name IS NOT NULL OR new_gender IS NOT NULL OR new_is_km IS NOT NULL OR new_platoon_id IS NOT NULL),
+ CHECK(kind='edit' OR (new_name IS NULL AND new_gender IS NULL AND new_is_km IS NULL AND new_platoon_id IS NULL)),
+ CHECK(kind NOT IN ('add_conflict','nominate_cmdr') OR platoon_id IS NOT NULL),
+ CHECK((status='pending')=(decided_at IS NULL)),
+ CHECK(decided_by IS NULL OR decided_at IS NOT NULL));
+CREATE INDEX idx_ccr_pending ON cadet_change_requests(requested_at) WHERE status='pending';
+CREATE UNIQUE INDEX uq_ccr_open ON cadet_change_requests(kind,target_user_id,requested_by) WHERE status='pending';
+DROP TABLE allowed_emails;
+INSERT INTO audit_log(actor_id,action,target_user_id,platoon_id)
+ SELECT NULL,'migrate.v9_grant_dropped',ip.instructor_id,ip.platoon_id FROM instructor_platoons ip
+ JOIN users u ON u.id=ip.instructor_id
+ WHERE NOT (u.role='instructor' AND ip.platoon_id=(SELECT x.platoon_id FROM instructor_platoons x
+  WHERE x.instructor_id=ip.instructor_id ORDER BY x.granted_at, x.platoon_id LIMIT 1));
+CREATE TABLE instructor_platoons_v9(
+ instructor_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+ platoon_id INTEGER NOT NULL REFERENCES platoons(id) ON DELETE CASCADE,
+ is_mm INTEGER NOT NULL DEFAULT 0 CHECK(is_mm IN (0,1)),
+ granted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+ granted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')));
+INSERT INTO instructor_platoons_v9(instructor_id,platoon_id,granted_by,granted_at)
+ SELECT ip.instructor_id,ip.platoon_id,ip.granted_by,ip.granted_at FROM instructor_platoons ip
+ JOIN users u ON u.id=ip.instructor_id
+ WHERE u.role='instructor' AND ip.platoon_id=(SELECT x.platoon_id FROM instructor_platoons x
+  WHERE x.instructor_id=ip.instructor_id ORDER BY x.granted_at, x.platoon_id LIMIT 1);
+DROP TABLE instructor_platoons;
+ALTER TABLE instructor_platoons_v9 RENAME TO instructor_platoons;
+CREATE INDEX idx_instructor_platoons_platoon ON instructor_platoons(platoon_id);
+CREATE UNIQUE INDEX uq_one_mm_per_platoon ON instructor_platoons(platoon_id) WHERE is_mm=1
+"""
+
 # user_version -> script that upgrades from (version-1). Append only; never edit a released entry.
 MIGRATIONS: dict[int, str] = {1: SCHEMA_V1, 2: SCHEMA_V2, 3: SCHEMA_V3, 4: SCHEMA_V4, 5: SCHEMA_V5, 6: SCHEMA_V6,
-                              7: SCHEMA_V7, 8: SCHEMA_V8}
+                              7: SCHEMA_V7, 8: SCHEMA_V8, 9: SCHEMA_V9}
 LATEST_VERSION = max(MIGRATIONS)
 # Versions whose script rebuilds a table that other tables reference: run with foreign_keys=OFF + foreign_key_check.
 _FK_OFF_VERSIONS = frozenset({2, 3, 4, 5})
@@ -466,9 +538,9 @@ def _apply_migration(conn: sqlite3.Connection, version: int) -> None:
 
 def _row_counts(conn: sqlite3.Connection, version: int):
     """Rows that a rebuilding migration must carry over unchanged (v3 joins results to users: an orphan would vanish)."""
-    if version not in (3, 4, 5):
+    if version not in (3, 4, 5, 9):
         return None
-    tables = ("users", "results", "sessions") + (("platoons",) if version == 5 else ())
+    tables = ("users", "results", "sessions") + (("platoons",) if version in (5, 9) else ())
     return tuple(conn.execute(f"SELECT count(*) FROM {t}").fetchone()[0] for t in tables)
 
 

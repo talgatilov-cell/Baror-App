@@ -5,14 +5,15 @@ Properties (tested in tests/test_auth_service.py):
 * Unknown e-mail still pays one scrypt (``verify_against_dummy``) so timing does not reveal existence.
 * Per-account backoff (policy below). A correct password during the backoff window is ALSO refused, otherwise the
   backoff would not slow a guesser down. Trade-off, stated plainly: a classmate who knows a victim's e-mail can keep
-  that account in backoff (max ``MAX_DELAY_S`` at a time). Mitigations: small delay cap, allowlist-only registration,
-  audit log of failures. Owner may choose a different policy (see research_notes/user_isolation.md).
+  that account in backoff (max ``MAX_DELAY_S`` at a time). Mitigations: small delay cap, per-address and app-wide
+  registration limits, audit log of failures. Owner may choose a different policy (see research_notes/user_isolation.md).
 * Legacy/low-cost hashes are upgraded on successful login (``needs_rehash``).
 * Deactivated accounts (``users.active=0``) get the SAME generic AuthError as a wrong password, AFTER a real scrypt
   verification of the supplied password (same cost as a normal failure), and without touching the failure counter.
   So "deactivated" is indistinguishable from "wrong password" by message and by timing.
-* ``register`` hashes the password on EVERY path before the allowlist is consulted, and returns one generic
-  RegistrationDeniedError for every refusal (see repo.register_with_allowlist).
+* ``register`` (open registration, always a cadet) hashes the password on EVERY path before anything that depends on the
+  e-mail is consulted, and returns one generic RegistrationDeniedError for a malformed or already used e-mail (see
+  storage/signup.py).
 """
 from __future__ import annotations
 
@@ -22,8 +23,8 @@ import threading
 from collections import OrderedDict
 
 from baror.auth import passwords
-from baror.errors import AuthError, RateLimitedError, ValidationError
-from baror.storage import db, repo
+from baror.errors import AuthError, RateLimitedError, RegistrationClosedError, SignupBusyError, ValidationError
+from baror.storage import db, repo, signup
 
 FREE_FAILURES = 4          # first 4 wrong passwords cost nothing extra
 BASE_DELAY_S = 2           # 5th failure -> 2 s, then doubling
@@ -156,14 +157,26 @@ def change_password(db_path, user_id, current_password, new_password, now: dt.da
                            revoke_sessions=True)
 
 
-def register(db_path, *, email, name, gender, is_km, password, now: dt.datetime | None = None) -> dict:
-    """Allowlist-gated self-registration. Returns the new user dict (no session is issued here).
+def register(db_path, *, email, name, gender, is_km, password, platoon_id: int | None = None,
+             cap: int = signup.DEFAULT_CAP_PER_HOUR, registration_open: bool = True,
+             now: dt.datetime | None = None) -> dict:
+    """Open self-registration: EVERY new account is a cadet (``platoon_id`` is optional). Returns the new user dict; no
+    session is issued here.
 
-    Raises ValidationError(password/name/gender field) for input that is bad regardless of the allowlist, else
-    RegistrationDeniedError (one generic error) when the e-mail is not registrable.
+    Order (nothing before the hash depends on the e-mail, so every outcome costs one scrypt):
+    1. the kill switch (``registration_open=False`` -> RegistrationClosedError; cheap, before any work);
+    2. the password policy (ValidationError, a field problem independent of the e-mail);
+    3. the hourly sign-up cap (SignupBusyError; independent of the e-mail);
+    4. scrypt, always;
+    5. ``signup.register_cadet``: one generic RegistrationDeniedError for a malformed or already used e-mail, field
+       ValidationError for name / gender / unknown platoon, SignupBusyError if the cap filled up meanwhile.
     """
-    passwords.check_policy(password)                  # 8..128 characters; independent of the allowlist
-    pw_hash = passwords.hash_password(password)       # always, before the allowlist: equal cost for every outcome
-    uid = repo.register_with_allowlist(db_path, email=email, name=name, gender=gender, is_km=is_km,
-                                       pw_hash=pw_hash, now=now)
+    if not registration_open:
+        raise RegistrationClosedError(detail="registration is closed (BAROR_REGISTRATION_OPEN=0)")
+    passwords.check_policy(password)                  # 8..128 characters
+    if signup.capacity_left(db_path, cap, now) <= 0:
+        raise SignupBusyError(detail="hourly sign-up cap reached")
+    pw_hash = passwords.hash_password(password)       # always, before anything that depends on the e-mail
+    uid = signup.register_cadet(db_path, email=email, name=name, gender=gender, is_km=is_km, pw_hash=pw_hash,
+                                platoon_id=platoon_id, cap=cap, now=now)
     return repo.get_user(db_path, uid)

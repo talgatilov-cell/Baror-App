@@ -8,9 +8,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from baror.auth import service, sessions
+from baror.auth import passwords, service, sessions
 from baror.errors import AuthError, NotFoundError, ValidationError
-from baror.storage import allowlist, db, ops, repo, retention
+from baror.storage import audit, db, ops, repo, retention
 from tests.v2base import V2Case
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -68,10 +68,13 @@ class RetentionCase(V2Case):
         self.ada_ps, self.bo_ps = self.pseudonym_of(self.ada), self.pseudonym_of(self.bo)
 
     def register(self, who, platoon, gender):
-        allowlist.add_entry(self.path, who["email"], platoon_id=platoon)
-        u = service.register(self.path, email=who["email"], name=who["name"], gender=gender, is_km=(gender == "M"),
-                             password=PW)
-        return u["id"]
+        """A cadet as open registration makes one (real password hash + the ``auth.register`` audit row). The
+        registration code itself lives in baror.storage.signup and is tested there."""
+        uid = repo.create_user(self.path, email=who["email"], name=who["name"], gender=gender, is_km=(gender == "M"),
+                               pw_hash=passwords.hash_password(PW), platoon_id=platoon)
+        with db.transaction(self.path) as c:
+            audit.record(c, actor_id=uid, action="auth.register", target_user_id=uid)
+        return uid
 
     def count(self, sql, args=()):
         with db.reader(self.path) as c:
@@ -194,8 +197,7 @@ class LinkIsGone(RetentionCase):
         retention.run(self.path, today=DUE_A)
         self.assertEqual(self.count("SELECT count(*) FROM users WHERE pseudonym IN (?,?)", (self.ada_ps, self.bo_ps)), 0)
         self.assertEqual(self.count("SELECT count(*) FROM sessions"), 0, "ada's session cascaded; nobody else had one")
-        self.assertEqual(self.count("SELECT count(*) FROM allowed_emails WHERE email IN (?,?)", (ADA["email"], BO["email"])), 0)
-        self.assertEqual(self.count("SELECT count(*) FROM allowed_emails WHERE used_by IS NOT NULL AND used_by NOT IN (SELECT id FROM users)"), 0)
+        self.assertEqual(self.count("SELECT count(*) FROM users WHERE email IN (?,?)", (ADA["email"], BO["email"])), 0)
         # audit rows that named them now name nobody
         self.assertEqual(self.count("SELECT count(*) FROM audit_log WHERE action='auth.register' AND actor_id IS NULL"), 2)
         self.assertEqual(self.count("SELECT count(*) FROM audit_log WHERE action='retention.run'"), 1)
@@ -226,7 +228,6 @@ class LinkIsGone(RetentionCase):
                 retention.run(self.path, today=DUE_A)
         self.assertEqual(self.count("SELECT count(*) FROM users"), 5)
         self.assertEqual(self.count("SELECT count(*) FROM pseudonyms WHERE deidentified_at IS NOT NULL"), 0)
-        self.assertEqual(self.count("SELECT count(*) FROM allowed_emails WHERE used_at IS NOT NULL"), 2)
         for m in self.deleted:
             self.assertIn(m, raw_bytes(self.path))
 
@@ -280,10 +281,9 @@ class FailureModes(RetentionCase):
 class AfterTheJob(RetentionCase):
     def test_same_email_registering_again_is_a_new_person_without_the_old_results(self):
         retention.run(self.path, today=DUE_A)
-        allowlist.add_entry(self.path, ADA["email"], platoon_id=self.pa)
-        u = service.register(self.path, email=ADA["email"], name="Someone Else", gender="F", is_km=False, password=PW)
-        self.assertNotEqual(self.pseudonym_of(u["id"]), self.ada_ps)
-        self.assertEqual(repo.list_results(self.path, u["id"]), [])
+        uid = self.register({"email": ADA["email"], "name": "Someone Else"}, self.pa, "F")     # the address is free again
+        self.assertNotEqual(self.pseudonym_of(uid), self.ada_ps)
+        self.assertEqual(repo.list_results(self.path, uid), [])
         self.assertEqual(self.count("SELECT count(*) FROM results WHERE pseudonym=?", (self.ada_ps,)), 3, "old ones untouched")
 
     def test_erasure_by_the_user_deletes_results_but_retention_keeps_them(self):

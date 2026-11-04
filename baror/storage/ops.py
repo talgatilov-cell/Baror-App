@@ -11,7 +11,7 @@ import datetime as dt
 
 from baror.domain import accommodation as rules
 from baror.errors import NotFoundError
-from baror.storage import admin, audit, db
+from baror.storage import admin, audit, db, people
 
 
 def _op(db_path, core, *args, **kw):
@@ -27,8 +27,27 @@ def reactivate_user(db_path, user_id):
     return _op(db_path, admin._do_reactivate, user_id)
 
 
-def set_role(db_path, user_id, role):
-    return _op(db_path, admin._do_set_role, user_id, role)
+def _do_set_role(c, actor, user_id, role, *, title=None, platoon_id=None, now=None):
+    people._apply_role(c, actor, user_id, role, title=title, platoon_id=platoon_id, allow_admin=True, now=now)
+    people._close_requests(c, decided_by=actor, now=now, target=user_id, requester=user_id)
+    audit.record(c, actor_id=actor, action="admin.set_role", target_user_id=user_id,
+                 platoon_id=platoon_id if role == "instructor" else None, now=now)
+
+
+def set_role(db_path, user_id, role, *, title=None, platoon_id=None, now=None):
+    """Operator: set any role, ``admin`` included (at most MAX_ADMINS active admins; the last admin cannot be demoted).
+    Same chief / מ"מ / מ"כ limits as the web path, so an instructor needs ``title`` and ``platoon_id``, a chief a title."""
+    return _op(db_path, _do_set_role, user_id, role, title=title, platoon_id=platoon_id, now=now)
+
+
+def _do_set_title(c, actor, user_id, title, *, now=None):
+    people._apply_title(c, user_id, title)
+    audit.record(c, actor_id=actor, action="admin.set_title", target_user_id=user_id, now=now)
+
+
+def set_title(db_path, user_id, title, *, now=None):
+    """Operator: set the title (mp/smp for a chief, mm/cmdr for an instructor) with the same limits as a grant."""
+    return _op(db_path, _do_set_title, user_id, title, now=now)
 
 
 def create_platoon(db_path, name):
@@ -39,16 +58,39 @@ def set_user_platoon(db_path, user_id, platoon_id):
     return _op(db_path, admin._do_set_user_platoon, user_id, platoon_id)
 
 
-def grant_platoon(db_path, instructor_id, platoon_id):
-    return _op(db_path, admin._do_grant, instructor_id, platoon_id)
+def _do_grant(c, actor, instructor_id, platoon_id, *, now=None):
+    people._set_instructor_platoon(c, actor, instructor_id, platoon_id, now)
+    audit.record(c, actor_id=actor, action="admin.grant", target_user_id=instructor_id, platoon_id=platoon_id, now=now)
+
+
+def grant_platoon(db_path, instructor_id, platoon_id, *, now=None):
+    """Operator: SET the platoon of an instructor (an instructor has exactly one; the destination's limits apply)."""
+    return _op(db_path, _do_grant, instructor_id, platoon_id, now=now)
+
+
+def _do_revoke(c, actor, instructor_id, platoon_id):
+    n = c.execute("DELETE FROM instructor_platoons WHERE instructor_id=? AND platoon_id=?",
+                  (instructor_id, platoon_id)).rowcount
+    if n:    # a מ"מ without a platoon is no מ"מ: the title goes with the seat (keeps title='mm' <-> is_mm in step)
+        c.execute("UPDATE users SET title=NULL WHERE id=? AND title='mm'", (instructor_id,))
+    audit.record(c, actor_id=actor, action="admin.revoke", target_user_id=instructor_id, platoon_id=platoon_id)
+    return n == 1
 
 
 def revoke_platoon(db_path, instructor_id, platoon_id):
-    return _op(db_path, admin._do_revoke, instructor_id, platoon_id)
+    """Operator: take the instructor out of the platoon (leaves them without one until ``grant_platoon``)."""
+    return _op(db_path, _do_revoke, instructor_id, platoon_id)
 
 
 def list_accounts(db_path):
-    return _op(db_path, admin._do_list_accounts)
+    return _op(db_path, _do_list_accounts)
+
+
+def _do_list_accounts(c, actor):
+    return [dict(r) for r in c.execute(
+        "SELECT u.id,u.email,u.name,u.role,u.title,u.active,COALESCE(ip.platoon_id,u.platoon_id) AS platoon_id,"
+        "p.name AS platoon FROM users u LEFT JOIN instructor_platoons ip ON ip.instructor_id=u.id "
+        "LEFT JOIN platoons p ON p.id=COALESCE(ip.platoon_id,u.platoon_id) ORDER BY u.id")]
 
 
 # ------------------------------------------------------------ accommodations (no actor check: the operator owns the file)

@@ -3,9 +3,11 @@ import statistics
 import threading
 import time
 import unittest
+from unittest import mock
 
 from baror.auth import passwords, service, sessions
-from baror.errors import AuthError, RateLimitedError
+from baror.errors import (AuthError, RateLimitedError, RegistrationClosedError, RegistrationDeniedError,
+                          SignupBusyError, ValidationError)
 from baror.storage import db, repo
 from tests.base import DbCase
 
@@ -269,6 +271,114 @@ class ChangePassword(DbCase):
         tok = sessions.issue(self.path, other)
         service.change_password(self.path, self.uid, "old-password-1", "new-password-2", at())
         self.assertEqual(sessions.resolve(self.path, tok)["id"], other)
+
+
+class Register(DbCase):
+    """Open registration (v9): always a cadet, scrypt on every path that depends on the e-mail, no session issued."""
+
+    PW = "long enough pw 1"
+
+    def setUp(self):
+        super().setUp()
+        patcher = mock.patch.object(passwords, "hash_password", wraps=passwords.hash_password)
+        self.hash = patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def reg(self, email="noa@example.com", **kw):
+        args = dict(email=email, name="Noa Levi", gender="F", is_km=False, password=self.PW)
+        args.update(kw)
+        return service.register(self.path, **args)
+
+    def count(self, table):
+        with db.reader(self.path) as c:
+            return c.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+
+    def test_creates_a_cadet_without_a_session_and_the_password_works_for_login(self):
+        user = self.reg()
+        self.assertEqual((user["email"], user["role"], user["active"], user["platoon_id"]), ("noa@example.com", "cadet", 1, None))
+        self.assertEqual(self.count("sessions"), 0, "no session is issued by register")
+        self.assertEqual(service.login(self.path, "noa@example.com", self.PW, at())["id"], user["id"])
+
+    def test_the_platoon_is_stored(self):
+        with db.transaction(self.path) as c:
+            pid = int(c.execute("INSERT INTO platoons(name) VALUES('A')").lastrowid)
+        self.assertEqual(self.reg(platoon_id=pid)["platoon_id"], pid)
+
+    def test_every_outcome_that_depends_on_the_email_costs_exactly_one_scrypt(self):
+        self.reg("used@example.com")
+        self.hash.reset_mock()
+        outcomes = []
+        for email in ("fresh@example.com", "used@example.com", "USED@example.com", "not-an-email", "", "x" * 300 + "@e.com"):
+            before = self.hash.call_count
+            try:
+                self.reg(email)
+                outcomes.append("ok")
+            except RegistrationDeniedError:
+                outcomes.append("denied")
+            self.assertEqual(self.hash.call_count - before, 1, email[:15])
+        self.assertEqual(outcomes, ["ok", "denied", "denied", "denied", "denied", "denied"])
+
+    def test_unknown_platoon_and_bad_name_also_hash_once_and_create_nothing(self):
+        for kw in (dict(platoon_id=999), dict(name="Noa1"), dict(gender="X")):
+            before = self.hash.call_count
+            with self.assertRaises(ValidationError, msg=str(kw)):
+                self.reg(**kw)
+            self.assertEqual(self.hash.call_count - before, 1)
+        self.assertEqual(self.count("users"), 0)
+
+    def test_password_policy_is_checked_first_and_does_not_hash(self):
+        for pw in ("1234567", "", "x" * 129):
+            with self.assertRaises(ValidationError) as cm:
+                self.reg(password=pw)
+            self.assertEqual(cm.exception.message_key, "INVALID_PASSWORD")
+        self.assertEqual(self.hash.call_count, 0)
+        self.assertEqual(self.count("users"), 0)
+
+    def test_refusals_are_generic_and_say_nothing_about_the_account(self):
+        self.reg("used@example.com")
+        seen = set()
+        for email in ("used@example.com", "bad", ""):
+            with self.assertRaises(RegistrationDeniedError) as cm:
+                self.reg(email)
+            seen.add((cm.exception.message_key, cm.exception.field, str(cm.exception.params)))
+        self.assertEqual(len(seen), 1, seen)
+
+    def test_the_hourly_cap_refuses_before_hashing(self):
+        self.reg("a@example.com", cap=1)
+        self.hash.reset_mock()
+        with self.assertRaises(SignupBusyError):
+            self.reg("b@example.com", cap=1)
+        self.assertEqual(self.hash.call_count, 0, "a full cap costs no scrypt")
+        self.assertEqual(self.count("users"), 1)
+
+    def test_the_kill_switch_refuses_before_anything_else(self):
+        with self.assertRaises(RegistrationClosedError):
+            self.reg(registration_open=False)
+        with self.assertRaises(RegistrationClosedError):
+            self.reg(registration_open=False, password="1")          # closed wins over a field problem
+        self.assertEqual(self.hash.call_count, 0)
+        self.assertEqual(self.count("users"), 0)
+
+    def test_there_is_no_way_to_ask_for_another_role(self):
+        for role in ("instructor", "chief", "admin"):
+            with self.assertRaises(TypeError):
+                self.reg(role=role)
+
+    def test_concurrent_registrations_of_one_address_make_one_account(self):
+        out, lock = [], threading.Lock()
+
+        def go():
+            try:
+                self.reg("race@example.com")
+                r = "ok"
+            except RegistrationDeniedError:
+                r = "denied"
+            with lock:
+                out.append(r)
+        ts = [threading.Thread(target=go) for _ in range(5)]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
+        self.assertEqual(sorted(out), ["denied"] * 4 + ["ok"])
 
 
 if __name__ == "__main__":

@@ -51,9 +51,26 @@ class IpLimitTests(unittest.TestCase):
         self.assertEqual(self.l.check_login("1.2.3.4", "b@x.il"), 0.0)
 
     def test_register_limit(self):
-        for _ in range(21):
+        for _ in range(60):
             self.l.record_register_attempt("5.5.5.5")
-        self.assertGreater(self.l.check_register("5.5.5.5"), 0)
+        self.assertEqual(self.l.check_register("5.5.5.5"), 0.0, "60 per hour are allowed")
+        self.l.record_register_attempt("5.5.5.5")
+        self.assertEqual(self.l.check_register("5.5.5.5"), 60.0)
+
+    def test_the_app_wide_register_limit_is_one_shared_counter_of_600_per_hour(self):
+        for i in range(600):
+            self.l.record_register_app()
+        self.assertEqual(self.l.check_register_app(), 0.0)
+        self.l.record_register_app()
+        self.assertEqual(self.l.check_register_app(), 60.0)
+        self.assertEqual(self.l.check_register("9.9.9.9"), 0.0, "the per-address counters are separate")
+        self.c.t += 61
+        self.assertEqual(self.l.check_register_app(), 0.0, "the cool-down ends")
+
+    def test_the_app_wide_counter_is_a_single_bounded_entry(self):
+        for _ in range(50):
+            self.l.record_register_app()
+        self.assertEqual(self.l.size(), 1)
 
     def test_window_slides(self):
         for _ in range(25):

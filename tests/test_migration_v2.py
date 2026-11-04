@@ -65,6 +65,7 @@ class V1ToV2(unittest.TestCase):
         with db.reader(self.path) as c:
             rows = c.execute("SELECT active,platoon_id FROM users").fetchall()
         self.assertEqual([(r[0], r[1]) for r in rows], [(1, None)] * 3)
+        db.init_db(self.path)       # the repository speaks the latest schema; the data survives all the later steps too
         self.assertEqual(repo.get_user(self.path, 2)["active"], 1)
 
     def test_child_foreign_keys_still_point_at_users_and_cascade_still_works(self):
@@ -84,7 +85,7 @@ class V1ToV2(unittest.TestCase):
             self.assertEqual(c.execute("SELECT count(*) FROM sessions").fetchone()[0], 2)
 
     def test_old_sessions_still_resolve_after_upgrade(self):
-        db.init_db(self.path, target_version=2)
+        db.init_db(self.path)       # the session code reads the latest schema (title, platoon)
         tok = sessions.issue(self.path, 2, 14)
         self.assertEqual(sessions.resolve(self.path, tok)["id"], 2)
         with db.reader(self.path) as c:
@@ -172,7 +173,9 @@ class FreshV2(unittest.TestCase):
                                   for r in c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"))
             self.assertEqual(shape(fresh), shape(up))
             names = {n for n, _ in shape(fresh)}
-            self.assertTrue({"users", "results", "sessions", "platoons", "instructor_platoons", "allowed_emails", "audit_log"} <= names)
+            self.assertTrue({"users", "results", "sessions", "platoons", "instructor_platoons", "cadet_change_requests", "signup_events",
+                                 "audit_log"} <= names)
+            self.assertNotIn("allowed_emails", names)       # dropped in v9: there is no registration gate any more
 
 
 if __name__ == "__main__":

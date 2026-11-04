@@ -7,8 +7,8 @@ Rules enforced here (tested in tests/test_repo.py):
 * SQL is always parameterized. Identifiers are never built from input.
 * Emails are normalised (strip + lower) in ONE place (``normalize_email``); the schema CHECK is the backstop.
 * Callers receive plain dicts; ``pw_hash`` is only returned by ``get_login_record``.
-* Schema v2: web registration goes through ``register_with_allowlist`` ONLY. ``create_user`` is the trusted/internal
-  path (JSON migration, operator tooling, tests) and does not consult the allowlist.
+* Schema v9: web registration is ``baror.storage.signup.register_cadet`` (open registration, always a cadet; there is
+  no allowlist any more). ``create_user`` is the trusted/internal path (JSON migration, operator tooling, tests).
 * Schema v3 (ADR-0002): results hang off a random pseudonym. Callers still pass ``user_id``; every results statement
   resolves it to that same user's pseudonym with ``PSEUDONYM_OF_USER``, so isolation is exactly as before.
 * Cohort (instructor) reads live in ``baror.storage.cohort``; this module still has no function that returns another
@@ -21,7 +21,7 @@ import secrets
 import unicodedata
 from typing import Any
 
-from baror.errors import ConflictError, NotFoundError, RegistrationDeniedError, ValidationError
+from baror.errors import AuthError, ConflictError, NotFoundError, ValidationError
 from baror.storage import accommodations, audit, db
 
 GENDERS = ("M", "F")
@@ -99,8 +99,8 @@ def check_display_name(name) -> str:
 
 def create_user(db_path, *, email: str, name: str, gender: str, is_km: bool, pw_hash: str,
                 must_change_pw: bool = False, role: str = "cadet", platoon_id: int | None = None) -> int:
-    """TRUSTED path: INSERT without consulting the allowlist (JSON migration, operator tooling, tests).
-    Web registration must use ``register_with_allowlist``. Uniqueness is enforced by the database, so two concurrent
+    """TRUSTED path: plain INSERT (JSON migration, operator tooling, tests).
+    Web registration must use ``baror.storage.signup.register_cadet``. Uniqueness is enforced by the database, so two concurrent
     registrations of the same e-mail cannot both succeed (closes BR-03c). Raises ConflictError if the e-mail exists."""
     e = normalize_email(email)
     _check_profile(name, gender)
@@ -115,53 +115,23 @@ def create_user(db_path, *, email: str, name: str, gender: str, is_km: bool, pw_
         return int(cur.lastrowid)
 
 
-def register_with_allowlist(db_path, *, email: str, name: str, gender: str, is_km: bool, pw_hash: str,
-                            must_change_pw: bool = False, now=None) -> int:
-    """Self-registration: allowed only for an allowlisted, not-yet-used e-mail. Returns the new user id.
-
-    ONE write transaction (BEGIN IMMEDIATE) does check-listed, check-no-account, INSERT user (role and platoon taken
-    from the allowlist entry) and consume the entry. Concurrent attempts for the same e-mail are serialised by the
-    write lock; exactly one wins, the others see the entry already consumed. UNIQUE(users.email) is the backstop.
-
-    Raises ``RegistrationDeniedError`` -- the SAME error and message for: e-mail not listed, entry already used,
-    account already exists, malformed e-mail. The reason is only in ``detail`` (server log). Name/gender problems
-    raise their own field errors BEFORE the allowlist is consulted (they do not depend on list membership).
-    Timing: every failure path performs the same single lookup under the same lock; the caller (service.register)
-    hashes the password first on every path, so the scrypt cost dominates and is identical.
-    """
-    _check_profile(name, gender)
-    name = check_display_name(name)            # before the allowlist is consulted: independent of list membership
-    try:
-        e = normalize_email(email)
-    except ValidationError:
-        raise RegistrationDeniedError(detail="invalid_email") from None
-    reason = None
-    try:
-        with db.transaction(db_path) as c:
-            ent = c.execute("SELECT role,platoon_id,used_at FROM allowed_emails WHERE email=?", (e,)).fetchone()
-            if ent is None:
-                reason = "not_listed"
-            elif ent["used_at"] is not None:
-                reason = "entry_already_used"
-            elif c.execute("SELECT 1 FROM users WHERE email=?", (e,)).fetchone():
-                reason = "account_exists"
-            if reason is None:
-                pseudonym = new_pseudonym()
-                c.execute("INSERT INTO pseudonyms(pseudonym) VALUES(?)", (pseudonym,))
-                uid = int(c.execute(
-                    "INSERT INTO users(email,name,gender,is_km,pw_hash,must_change_pw,role,platoon_id,pseudonym) "
-                    "VALUES(?,?,?,?,?,?,?,?,?)",
-                    (e, name.strip(), gender, int(bool(is_km)), pw_hash, int(bool(must_change_pw)),
-                     ent["role"], ent["platoon_id"], pseudonym)).lastrowid)
-                won = c.execute("UPDATE allowed_emails SET used_by=?, used_at=? WHERE email=? AND used_at IS NULL",
-                                (uid, audit.ts(now), e)).rowcount
-                if won != 1:  # cannot happen under the write lock; fail closed (rolls the INSERT back)
-                    raise RegistrationDeniedError(detail="lost_race")
-                audit.record(c, actor_id=uid, action="auth.register", target_user_id=uid, now=now)
-                return uid
-    except ConflictError:
-        raise RegistrationDeniedError(detail="account_exists") from None
-    raise RegistrationDeniedError(detail=reason)
+def set_own_platoon(db_path, user_id: int, platoon_id: int, *, now=None) -> None:
+    """A cadet WITHOUT a platoon picks one (profile block). Only when ``platoon_id`` is NULL: otherwise ConflictError
+    (PLATOON_ALREADY_SET) -- from then on only staff move the cadet. ``user_id`` comes from the server-side session.
+    Unknown platoon -> ValidationError (PLATOON_REQUIRED); a non-cadet or inactive account -> AuthError. Audit
+    ``cadet.set_platoon`` (ids only)."""
+    with db.transaction(db_path) as c:
+        u = c.execute("SELECT role,active,platoon_id FROM users WHERE id=?", (user_id,)).fetchone() \
+            if isinstance(user_id, int) and not isinstance(user_id, bool) and 0 < user_id < 2**63 else None
+        if u is None or not u["active"] or u["role"] != "cadet":
+            raise AuthError("NOT_AUTHORISED", detail="only an active cadet picks a platoon")
+        if u["platoon_id"] is not None:
+            raise ConflictError("PLATOON_ALREADY_SET", detail="platoon already set")
+        if not isinstance(platoon_id, int) or isinstance(platoon_id, bool) or not 0 < platoon_id < 2**63 or \
+                c.execute("SELECT 1 FROM platoons WHERE id=?", (platoon_id,)).fetchone() is None:
+            raise ValidationError("PLATOON_REQUIRED", field="platoon", detail="unknown platoon")
+        c.execute("UPDATE users SET platoon_id=? WHERE id=?", (platoon_id, user_id))
+        audit.record(c, actor_id=user_id, action="cadet.set_platoon", target_user_id=user_id, platoon_id=platoon_id, now=now)
 
 
 def get_login_record(db_path, email: str) -> dict[str, Any] | None:
@@ -178,8 +148,10 @@ def get_login_record(db_path, email: str) -> dict[str, Any] | None:
 
 def get_user(db_path, user_id: int) -> dict[str, Any] | None:
     with db.reader(db_path) as c:
-        row = c.execute("SELECT id,email,name,gender,is_km,must_change_pw,role,created_at,platoon_id,active FROM users WHERE id=?",
-                        (user_id,)).fetchone()
+        # platoon_id: the cadet's platoon, or the instructor's one (lives in instructor_platoons since schema v9)
+        row = c.execute("SELECT u.id,u.email,u.name,u.gender,u.is_km,u.must_change_pw,u.role,u.title,u.created_at,"
+                        "COALESCE(ip.platoon_id,u.platoon_id) AS platoon_id,u.active FROM users u "
+                        "LEFT JOIN instructor_platoons ip ON ip.instructor_id=u.id WHERE u.id=?", (user_id,)).fetchone()
     return dict(row) if row else None
 
 

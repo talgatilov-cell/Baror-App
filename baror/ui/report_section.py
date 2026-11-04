@@ -16,13 +16,19 @@ import datetime as dt
 
 import streamlit as st
 
+from baror import export_report_pdf
 from baror.config import Config, mail_from_env
+from baror.domain import reports as schedule
+from baror.domain.grading import grade_stored_value
 from baror.errors import BarorError, ConfigError
 from baror.messages_he import month_label, render_exception, t
 from baror.storage import chief, reports
+from baror.ui import accom
 
+_TYPES = ("weekly", "monthly", "trailing", "range")
 _LIST = "_report_list"          # {"type": 'weekly'|'monthly', "rows": [...]}
 _OPEN = "_report_open"          # {"id": int, "name": str, "pdf": bytes}   (the ONE prepared report)
+_ADHOC = "_report_adhoc"        # {"kind", "start", "end", "name", "pdf"}   (the ONE on-demand report, never stored)
 _ERR = "_report_error"
 _TOGGLE = "report_mail_toggle"
 _SHOWN = 8                      # newest reports shown directly; the rest are in an expander
@@ -97,14 +103,76 @@ def _row(cfg: Config, user: dict, r: dict) -> None:
                 st.rerun()
 
 
+def _adhoc_name(kind: str, start: dt.date, end: dt.date) -> str:
+    return f"baror-{kind}-{end.isoformat()}.pdf" if kind == "trailing" else f"baror-{kind}-{start.isoformat()}_{end.isoformat()}.pdf"
+
+
+def _make(cfg: Config, user: dict, kind: str, start: dt.date, end: dt.date, today: dt.date) -> None:
+    """Generate ONE on-demand report (one audit row, nothing stored) and keep the bytes in session state for the download."""
+    pdf = guard(lambda: reports.adhoc_report(
+        cfg.db_path, user["id"], start, end, kind=kind, grade=grade_stored_value, today=today,
+        render=lambda data: export_report_pdf.build_report_pdf(data, generated=today)))
+    if pdf is None:
+        st.session_state.pop(_ADHOC, None)
+        return
+    st.session_state[_ADHOC] = {"kind": kind, "start": start, "end": end, "name": _adhoc_name(kind, start, end), "pdf": pdf}
+
+
+def _adhoc(cfg: Config, user: dict, kind: str) -> None:
+    """The last 30 days, or a chosen date range of at most 5 calendar months. The range is checked here with the same
+    domain function storage uses (so the message appears before the press); storage checks it again. Nothing is stored:
+    the file lives under a '_' key until sign-out or the next change."""
+    today = accom.today_of(cfg)
+    if kind == "trailing":
+        start, end = schedule.trailing_period(today)
+        st.caption(t("report_trailing_help"))
+        problem = None
+    else:
+        c1, c2 = st.columns(2, wrap=False, gap="small")
+        with c1:
+            start = st.date_input(t("report_range_start"), value=today - dt.timedelta(days=30), max_value=today,
+                                  format="DD/MM/YYYY", key="report_range_from")
+        with c2:
+            end = st.date_input(t("report_range_end"), value=today, max_value=today, format="DD/MM/YYYY",
+                                key="report_range_to")
+        st.caption(t("report_range_help"))
+        problem = None
+        try:
+            schedule.validate_range(start, end, today)
+        except BarorError as exc:
+            problem = render_exception(exc)
+    st.caption(t("report_range_period", start=_dmy(start.isoformat()), end=_dmy(end.isoformat())))
+    if problem:
+        st.error(problem, icon=":material/error:")
+    st.caption(t("report_adhoc_note"))
+    held = st.session_state.get(_ADHOC)
+    if held is not None and (held["kind"], held["start"], held["end"]) != (kind, start, end):
+        st.session_state.pop(_ADHOC, None)                         # the choice changed: the old file no longer matches
+        held = None
+    if st.button(t("report_range_btn_make"), key="report_make", icon=":material/description:", width="stretch",
+                 disabled=problem is not None):
+        _make(cfg, user, kind, start, end, today)
+        st.rerun()
+    if held is not None:
+        st.success(t("report_range_ready"), icon=":material/check_circle:")
+        st.download_button(t("report_btn_download"), data=held["pdf"], file_name=held["name"], mime="application/pdf",
+                           icon=":material/picture_as_pdf:", width="stretch", key="report_dl_adhoc", type="primary",
+                           on_click="ignore")
+
+
 def render(cfg: Config, user: dict) -> None:
     st.subheader(t("report_section_title"))
     st.caption(t("report_intro"))
     if st.session_state.get(_ERR):
         st.error(st.session_state.pop(_ERR), icon=":material/error:")
     _switch(cfg, user)
-    kind = st.segmented_control(t("report_type_label"), ["weekly", "monthly"], default="weekly", key="report_type",
-                                required=True, width="stretch", format_func=lambda k: t("report_type_" + k))
+    kind = st.selectbox(t("report_type_label"), _TYPES, index=0, key="report_type", filter_mode=None,
+                        format_func=lambda k: t("report_type_" + k))
+    if kind in schedule.ADHOC_KINDS:
+        st.session_state.pop(_OPEN, None)
+        _adhoc(cfg, user, kind)
+        return
+    st.session_state.pop(_ADHOC, None)
     held = st.session_state.get(_LIST)
     if held is None or held["type"] != kind:               # one audited read per type, not one per rerun
         rows = guard(lambda: chief.list_reports(cfg.db_path, user["id"], kind))

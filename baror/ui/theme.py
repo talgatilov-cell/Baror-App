@@ -17,18 +17,24 @@ import streamlit as st
 
 ROOT = Path(__file__).resolve().parents[2]
 CSS_PATH = ROOT / "static" / "app.css"
+ADMIN_CSS_PATH = ROOT / "static" / "admin.css"      # admin screen, accounts panel, bell: loaded after app.css
 log = logging.getLogger("baror.ui")
 
 _BOOT = "<script>const d=document.documentElement; d.lang='he'; d.dir='rtl';</script>"
 
 
+def _read(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        log.warning("stylesheet missing: %s", path.name)           # the app stays usable with Streamlit's own theme
+        return ""
+
+
 @functools.lru_cache(maxsize=1)
 def css_text() -> str:
-    try:
-        return CSS_PATH.read_text(encoding="utf-8")
-    except OSError:
-        log.warning("stylesheet missing: %s", CSS_PATH.name)       # the app stays usable with Streamlit's own theme
-        return ""
+    """app.css followed by admin.css (later rules win by source order, as before)."""
+    return "\n".join(part for part in (_read(CSS_PATH), _read(ADMIN_CSS_PATH)) if part)
 
 
 def apply() -> None:

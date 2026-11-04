@@ -196,6 +196,30 @@ class Database(StartupCase):
         self.assertIn("integrity", cm.exception.detail)
 
 
+class RegistrationState(StartupCase):
+    def test_summary_never_contains_the_join_secret_or_the_public_address(self):
+        c = types.SimpleNamespace(db_path=self.path, tz_name="Asia/Jerusalem", registration_open=False,
+                                  signup_cap_per_hour=50, join_link_secret="S" * 40,
+                                  public_url="https://baror.example.org")
+        state = startup.registration_state(c)
+        self.assertEqual(state, {"open": False, "signup_cap_per_hour": 50, "join_links": True, "public_url_set": True})
+        self.assertNotIn("S" * 40, str(state))
+        self.assertNotIn("baror.example.org", str(state))
+
+    def test_a_duck_typed_config_without_the_new_fields_reads_as_open_and_off(self):
+        self.assertEqual(startup.registration_state(cfg(self.path)),
+                         {"open": True, "signup_cap_per_hour": None, "join_links": False, "public_url_set": False})
+
+    def test_the_state_is_logged_once_at_start_up_without_secrets(self):
+        c = types.SimpleNamespace(db_path=self.path, tz_name="Asia/Jerusalem", registration_open=True,
+                                  signup_cap_per_hour=120, join_link_secret="S" * 40, public_url=None)
+        with self.assertLogs("baror.startup", level="INFO") as logs:
+            startup.run_startup_checks(c)
+        text = "\n".join(logs.output)
+        self.assertIn("registration_state", text)
+        self.assertNotIn("S" * 40, text)
+
+
 class Maintenance(StartupCase):
     def test_env_flag_and_flag_file(self):
         self.assertFalse(startup.maintenance_active(self.path, env={}))

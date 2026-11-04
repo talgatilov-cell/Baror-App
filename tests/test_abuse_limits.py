@@ -14,7 +14,7 @@ from baror import config
 from baror.auth import passwords, service
 from baror.errors import ConfigError
 from baror.messages_he import ERRORS, render_error, t
-from baror.storage import allowlist, db, repo
+from baror.storage import db, repo
 from baror.ui import guards
 from baror.ui import session as ui_session
 from tests.test_app import APP, PW, AppCase, btn
@@ -53,6 +53,57 @@ class Cfg(unittest.TestCase):
         for bad in ("-1", "61", "x", "nan"):
             with self.assertRaises(ConfigError, msg=bad):
                 config.from_env({"BAROR_BOT_MIN_SECONDS": bad})
+
+
+class RegistrationConfig(unittest.TestCase):
+    def test_signup_cap_default_range_and_fail_to_default(self):
+        self.assertEqual(config.from_env({}).signup_cap_per_hour, 120)
+        self.assertEqual(config.from_env({"BAROR_SIGNUP_CAP_PER_HOUR": "1"}).signup_cap_per_hour, 1)
+        self.assertEqual(config.from_env({"BAROR_SIGNUP_CAP_PER_HOUR": " 1000 "}).signup_cap_per_hour, 1000)
+        for bad in ("0", "-5", "1001", "999999", "x", "1.5", "", "nan"):
+            self.assertEqual(config.from_env({"BAROR_SIGNUP_CAP_PER_HOUR": bad}).signup_cap_per_hour, 120, bad)
+
+    def test_kill_switch(self):
+        self.assertTrue(config.from_env({}).registration_open)
+        self.assertTrue(config.from_env({"BAROR_REGISTRATION_OPEN": "1"}).registration_open)
+        self.assertTrue(config.from_env({"BAROR_REGISTRATION_OPEN": ""}).registration_open)
+        self.assertFalse(config.from_env({"BAROR_REGISTRATION_OPEN": "0"}).registration_open)
+        for bad in ("false", "2", "yes"):
+            with self.assertRaises(ConfigError, msg=bad):
+                config.from_env({"BAROR_REGISTRATION_OPEN": bad})
+
+    def test_join_link_secret_is_32_plus_characters_unset_means_off_and_it_never_leaks(self):
+        self.assertIsNone(config.from_env({}).join_link_secret)
+        self.assertFalse(config.from_env({}).join_links_enabled)
+        self.assertIsNone(config.from_env({"BAROR_JOIN_LINK_SECRET": "  "}).join_link_secret)
+        secret = "Zq" * 20
+        cfg = config.from_env({"BAROR_JOIN_LINK_SECRET": secret})
+        self.assertEqual(cfg.join_link_secret, secret)
+        self.assertTrue(cfg.join_links_enabled)
+        self.assertNotIn(secret, repr(cfg))
+        self.assertNotIn(secret, str(cfg))
+        for bad in ("x" * 31, "x" * 40 + " ", "x" * 20 + " " + "y" * 20, "x" * 40 + "\n", "x" * 600):
+            with self.assertRaises(ConfigError, msg=repr(bad)) as cm:
+                config.from_env({"BAROR_JOIN_LINK_SECRET": bad})
+            self.assertNotIn(bad.strip(), cm.exception.detail, "the value is never echoed")
+
+    def test_public_url_is_https_only_and_optional(self):
+        self.assertIsNone(config.from_env({}).public_url)
+        self.assertIsNone(config.from_env({"BAROR_PUBLIC_URL": " "}).public_url)
+        self.assertEqual(config.from_env({"BAROR_PUBLIC_URL": "https://baror.example.org/"}).public_url,
+                         "https://baror.example.org")
+        self.assertEqual(config.from_env({"BAROR_PUBLIC_URL": "https://baror.example.org:8443"}).public_url,
+                         "https://baror.example.org:8443")
+        for bad in ("http://baror.example.org", "baror.example.org", "ftp://x.org", "javascript:alert(1)", "https://",
+                    "https://u:p@baror.example.org", "https://a.org/path", "https://a.org?x=1", "https://a.org/#f",
+                    "https://a.org:99999", "https://a b.org", "https://" + "a" * 250 + ".org"):
+            with self.assertRaises(ConfigError, msg=repr(bad)):
+                config.from_env({"BAROR_PUBLIC_URL": bad})
+
+    def test_all_new_variables_are_in_the_cache_key(self):
+        for k in ("BAROR_SIGNUP_CAP_PER_HOUR", "BAROR_REGISTRATION_OPEN", "BAROR_JOIN_LINK_SECRET", "BAROR_PUBLIC_URL"):
+            self.assertIn(k, config.ENV_KEYS)
+            self.assertNotEqual(config.env_key({}), config.env_key({k: "1"}), k)
 
 
 class ClientAddress(AppCase):
@@ -164,9 +215,6 @@ class IpLimitWired(AppCase):
 
     def test_a_platoon_behind_one_address_is_never_locked_out(self):
         """45 cadets on one NAT address: each registers, makes one typo, signs in. Nobody is refused."""
-        pid = 0
-        for i in range(45):
-            allowlist.add_entry(self.path, f"c{i}@example.com")
         for i in range(45):
             with mock.patch.object(st, "context", ctx(ip="203.0.113.9")):
                 at = self.register(f"c{i}@example.com", name="Cadet " + chr(ord("A") + i % 26) + chr(ord("A") + i // 26), gender="gender_male", password=PW)
@@ -176,21 +224,57 @@ class IpLimitWired(AppCase):
             self.assertEqual(ERRORS["AUTH_FAILED"].title in bad.error[0].value, True, f"cadet {i}")
             good = self.attempt(email=f"c{i}@example.com", pw=PW)
             self.assertTrue(self.in_app(good), f"cadet {i} could not sign in after one typo")
-        self.assertEqual(pid, 0)
+
+    def test_the_registration_limits_are_the_documented_numbers(self):
+        self.assertEqual(guards.LIMITS["register"], (60, 3600.0))
+        self.assertEqual(guards.LIMITS["register_app"], (600, 3600.0))
+        self.assertEqual(REGISTER_LIMIT, 60)
 
     def test_registration_attempts_are_limited_per_address_before_hashing(self):
-        for i in range(REGISTER_LIMIT + 1):
+        guards.limiter().__init__(limits={**guards.LIMITS, "register": (3, 3600.0)})   # a small limit keeps the test fast
+        for i in range(3 + 1):
             with mock.patch.object(st, "context", ctx(ip="203.0.113.9")):
-                self.register(f"nobody{i}@example.com", gender="gender_male", password="long enough 1")
+                self.assertFalse(self.register(f"nobody{i}@example.com", gender="gender_male").error)
         before = self.hashes() + 0
         with mock.patch.object(st, "context", ctx(ip="203.0.113.9")), mock.patch.object(service, "register") as reg:
             at = self.register("another@example.com", gender="gender_male", password="long enough 1")
         reg.assert_not_called()
         self.assertIn(ERRORS["RATE_LIMITED"].title, at.error[0].value)
+        self.assertIsNone(repo.get_login_record(self.path, "another@example.com"))
         with mock.patch.object(st, "context", ctx(ip="198.51.100.1")):
             at = self.register("another@example.com", gender="gender_male", password="long enough 1")
-        self.assertEqual(at.error[0].value, render_error("REGISTRATION_DENIED"), "another address is still served")
+        self.assertFalse(at.error, "another address is still served")
         self.assertEqual(before, self.hashes())
+
+    def test_the_address_limit_counts_the_documented_60_attempts(self):
+        lim = guards.limiter()
+        for _ in range(REGISTER_LIMIT):
+            lim.record_register_attempt("203.0.113.9")
+        self.assertEqual(lim.check_register("203.0.113.9"), 0.0, "60 attempts in an hour are allowed")
+        lim.record_register_attempt("203.0.113.9")
+        self.assertGreater(lim.check_register("203.0.113.9"), 0.0)
+
+    def test_the_app_wide_limit_refuses_every_address_before_hashing_and_sign_in_still_works(self):
+        lim = guards.limiter()
+        for _ in range(guards.LIMITS["register_app"][0] + 1):
+            lim.record_register_app()
+        self.assertGreater(lim.check_register_app(), 0.0)
+        for ip in ("203.0.113.9", "198.51.100.1"):
+            with mock.patch.object(st, "context", ctx(ip=ip)), mock.patch.object(service, "register") as reg:
+                at = self.register("another@example.com", gender="gender_male", password="long enough 1")
+            reg.assert_not_called()
+            self.assertIn(ERRORS["RATE_LIMITED"].title, at.error[0].value, ip)
+        self.assertIsNone(repo.get_login_record(self.path, "another@example.com"))
+        self.assertTrue(self.in_app(self.attempt(pw=PW)), "sign-in uses other counters")
+
+    def test_only_attempts_that_reach_the_hash_count_against_the_app_wide_limit(self):
+        with mock.patch.object(st, "context", ctx(ip="203.0.113.9")):
+            self.register("noa@example.com", gender="gender_female", password="1234567")      # policy refusal
+        table = guards.limiter()._t["register_app"].d
+        self.assertNotIn("app", table)
+        with mock.patch.object(st, "context", ctx(ip="203.0.113.9")):
+            self.assertFalse(self.register("noa@example.com", gender="gender_female", password="12345678").error)
+        self.assertEqual(len(table["app"][0]), 1)
 
     def test_limiter_memory_stays_bounded_under_a_flood_of_addresses(self):
         lim = guards.limiter()
@@ -280,12 +364,11 @@ class BotCheckWired(AppCase):
         self.assertEqual(at.error[0].value, t("bot_check_failed"))
 
     def test_registration_has_the_same_protection(self):
-        allowlist.add_entry(self.path, "noa@example.com")
         at = self.open()
         self.clock[0] += 0.2
         at = self.register("noa@example.com", gender="gender_female", password="12345678", at=at)
         self.assertEqual(at.error[0].value, t("bot_check_failed"))
-        self.assertEqual(len(allowlist.list_entries(self.path, status="pending")), 1)
+        self.assertEqual(self.users(), 1, "refused before anything was created")
         self.clock[0] += 5
         at.text_input(key="hp_register_value").set_value("bot")
         btn(at, t("btn_register")).click()

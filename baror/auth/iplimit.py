@@ -3,7 +3,9 @@
 Thresholds are GENEROUS on purpose: a whole platoon may share one public IP (NAT), so a per-IP limit must never be
 reachable by honest typos. Per-account delay (service.py) is the tight control; this only stops mass guessing/spam.
   * failed logins per IP:            30 in 10 min   -> cool-down 60 s, doubling per repeat, max 1 h
-  * registration attempts per IP:    20 in 1 h      -> same cool-down scheme
+  * registration attempts per IP:    60 in 1 h      -> same cool-down scheme
+  * registration attempts, ALL IPs:  600 in 1 h     -> same cool-down scheme (one shared counter for the whole app, so a
+                                                       flood from many addresses cannot exhaust the CPU on scrypt)
   * failures per (IP, account) pair: 8 in 10 min    -> same cool-down scheme
 IPv6 addresses are bucketed by /64. Memory is bounded (MAX_KEYS per table, oldest-touched evicted).
 Trust: see client_ip(); never trust X-Forwarded-For from an untrusted peer.
@@ -21,9 +23,11 @@ MAX_COOLDOWN_S = 3600.0
 STRIKE_DECAY_S = 86400.0   # a clean day forgives earlier cool-downs, so a shared IP is not punished for ever
 LIMITS = {
     "login": (30, 600.0),
-    "register": (20, 3600.0),
+    "register": (60, 3600.0),
+    "register_app": (600, 3600.0),
     "pair": (8, 600.0),
 }
+APP_KEY = "app"            # the single key of the app-wide table
 
 
 def normalize_ip(raw: str) -> str:
@@ -159,6 +163,15 @@ class IpLimiter:
     def record_register_attempt(self, ip):
         with self._lock:
             self._t["register"].record(normalize_ip(ip))
+
+    def check_register_app(self):
+        """Seconds to wait (0.0 = allowed) for the app-wide registration counter. Call before hashing."""
+        with self._lock:
+            return self._t["register_app"].retry_after(APP_KEY)
+
+    def record_register_app(self):
+        with self._lock:
+            self._t["register_app"].record(APP_KEY)
 
     def size(self):
         with self._lock:

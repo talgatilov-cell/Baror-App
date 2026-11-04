@@ -16,7 +16,7 @@ from baror.auth import passwords, service, sessions
 from baror.errors import AuthError
 from baror.ui import accom, personal, profile as profile_ui
 from baror.messages_he import ERRORS, render_error, t
-from baror.storage import accommodations, allowlist, audit, db, ops, repo
+from baror.storage import accommodations, audit, db, ops, repo
 from baror.ui import guards
 from baror.ui import session as ui_session
 from baror.ui.text import esc
@@ -46,12 +46,13 @@ class AppCase(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.path = os.path.join(self._tmp.name, "app.db")
         saved = {k: os.environ.get(k) for k in ("DB_PATH", "BAROR_COHORT_VIEWS", "SESSION_DAYS", "BAROR_BOT_MIN_SECONDS",
-                                                "TRUSTED_PROXIES", "FORWARDED_ALLOW_IPS")}
+                                                "TRUSTED_PROXIES", "FORWARDED_ALLOW_IPS", "BAROR_REGISTRATION_OPEN",
+                                                "BAROR_SIGNUP_CAP_PER_HOUR", "BAROR_JOIN_LINK_SECRET", "BAROR_PUBLIC_URL")}
         self.addCleanup(lambda: [os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v) for k, v in saved.items()])
         os.environ["DB_PATH"] = self.path
-        os.environ.pop("SESSION_DAYS", None)
-        os.environ.pop("TRUSTED_PROXIES", None)
-        os.environ.pop("FORWARDED_ALLOW_IPS", None)
+        for k in ("SESSION_DAYS", "TRUSTED_PROXIES", "FORWARDED_ALLOW_IPS", "BAROR_REGISTRATION_OPEN",
+                  "BAROR_SIGNUP_CAP_PER_HOUR", "BAROR_JOIN_LINK_SECRET", "BAROR_PUBLIC_URL"):
+            os.environ.pop(k, None)
         os.environ["BAROR_BOT_MIN_SECONDS"] = "0"        # AppTest submits instantly; tests/test_abuse_limits.py covers timing
         guards.limiter().__init__(limits=guards.LIMITS)     # fresh counters per test (process-wide singleton)
         os.environ["BAROR_COHORT_VIEWS"] = "1" if self.cohort_views else "0"
@@ -83,12 +84,15 @@ class AppCase(unittest.TestCase):
         self.cadet(**kw)
         return self.sign_in(kw.get("email", "dana@example.com"), kw.get("password", PW))
 
-    def register(self, email, name="Noa", gender=None, password="long enough 1", confirm=None, km=False, at=None):
+    def register(self, email, name="Noa", gender=None, password="long enough 1", confirm=None, km=False, at=None,
+                 platoon=None):
         at = at or self.fresh()
         at.text_input(key="reg_name").set_value(name)
         at.text_input(key="reg_email").set_value(email)
         if gender:
             at.selectbox(key="reg_gender").select(t(gender))
+        if platoon:
+            at.selectbox(key="reg_platoon").select(platoon)          # the platoon ID: the options are ids shown as names
         at.checkbox(key="reg_km").set_value(km)
         at.text_input(key="reg_pass").set_value(password)
         at.text_input(key="reg_pass2").set_value(password if confirm is None else confirm)
@@ -124,7 +128,7 @@ class SignIn(AppCase):
         labels = [l for l in labels if l != t("honeypot_label")]
         self.assertEqual(labels, [t("field_email"), t("field_password"), t("field_name"), t("field_email"),
                                   t("field_password"), t("field_password_confirm")])
-        self.assertFalse([l for l in labels if "קוד" in l], "registration is by allowlist, not by invite code")
+        self.assertFalse([l for l in labels if "קוד" in l], "registration is open, not by invite code")
         self.assertIn(t("app_title"), texts(at))
 
     def test_successful_sign_in_shows_the_app_and_sets_the_cookie_once(self):
@@ -188,36 +192,49 @@ class SignIn(AppCase):
 
 
 class Registration(AppCase):
-    def test_listed_email_registers_and_is_signed_in_with_the_listed_platoon(self):
+    def test_open_registration_creates_a_signed_in_cadet_with_the_chosen_platoon(self):
         pid = ops.create_platoon(self.path, "A")
-        allowlist.add_entry(self.path, "noa@example.com", platoon_id=pid)
-        at = self.register("  Noa@Example.com ", gender="gender_female")
+        at = self.register("  Noa@Example.com ", gender="gender_female", platoon=pid)
         self.assertFalse(at.exception)
         self.assertFalse(at.error)
         self.assertIn("Noa", texts(at))
         self.assertEqual(self.set_cookie.call_count, 1)
         u = repo.get_user(self.path, repo.get_login_record(self.path, "noa@example.com")["id"])
         self.assertEqual((u["role"], u["platoon_id"], u["gender"]), ("cadet", pid, "F"))
-        self.assertEqual(allowlist.list_entries(self.path, status="used")[0]["email"], "noa@example.com")
+
+    def test_the_platoon_is_optional_and_the_first_option_is_unknown(self):
+        ops.create_platoon(self.path, "A")
+        at = self.fresh()
+        self.assertEqual(at.selectbox(key="reg_platoon").options[0], t("reg_platoon_none"))
+        self.assertIn("A", at.selectbox(key="reg_platoon").options)
+        self.assertIsNone(at.selectbox(key="reg_platoon").value)
+        at = self.register("noa@example.com", gender="gender_female", at=at)
+        self.assertFalse(at.error)
+        u = repo.get_user(self.path, repo.get_login_record(self.path, "noa@example.com")["id"])
+        self.assertEqual((u["role"], u["platoon_id"]), ("cadet", None))
 
     def test_every_refusal_shows_the_same_single_message_and_creates_nothing(self):
-        allowlist.add_entry(self.path, "used@example.com")
         service.register(self.path, email="used@example.com", name="U", gender="M", is_km=False, password=PW)
-        allowlist.add_entry(self.path, "listed@example.com")
         before = self.users()
-        shown = set()
-        for email in ("unlisted@example.com", "used@example.com", "not-an-email", "", "x" * 300 + "@example.com"):
+        shown, notes = set(), set()
+        for email in ("used@example.com", "USED@example.com", "not-an-email", "", "x" * 300 + "@example.com"):
             at = self.register(email, gender="gender_male")
             self.assertEqual(len(at.error), 1, email[:20])
             shown.add(at.error[0].value)
+            notes.add(t("register_taken_note") in [c.value for c in at.caption])
         self.assertEqual(shown, {render_error("REGISTRATION_DENIED")})
+        self.assertEqual(notes, {True}, "the note comes with every generic refusal, so it confirms nothing")
         self.assertEqual(self.users(), before)
         for word in ("רשימ", "מורשה", "היתר", "קיים"):
             self.assertNotIn(word, next(iter(shown)))
         self.assertEqual(self.set_cookie.call_count, 0)
 
-    def test_password_rules_are_per_field_and_do_not_consume_the_allowlist_entry(self):
-        allowlist.add_entry(self.path, "noa@example.com")
+    def test_an_unknown_email_simply_registers(self):
+        at = self.register("anyone@example.com", gender="gender_male")
+        self.assertFalse(at.error)
+        self.assertTrue(self.in_app(at))
+
+    def test_password_rules_are_per_field_and_create_nothing(self):
         short = self.register("noa@example.com", gender="gender_female", password="1234567")
         self.assertEqual([e.value for e in short.error], [render_error("INVALID_PASSWORD")])
         mismatch = self.register("noa@example.com", gender="gender_female", password="12345678", confirm="12345679")
@@ -225,27 +242,84 @@ class Registration(AppCase):
         nogender = self.register("noa@example.com", password="12345678")
         self.assertEqual([e.value for e in nogender.error], [render_error("INVALID_GENDER")])
         self.assertEqual(self.users(), 0)
-        self.assertEqual(len(allowlist.list_entries(self.path, status="pending")), 1)
         ok = self.register("noa@example.com", gender="gender_female", password="12345678")
         self.assertFalse(ok.error)
         self.assertEqual(self.users(), 1)
 
-    def test_names_are_letters_only_and_a_refused_name_does_not_consume_the_allowlist_entry(self):
-        allowlist.add_entry(self.path, "noa@example.com")
+    def test_names_are_letters_only(self):
         for name in ("Noa1", "נועה <b>x</b>", "נועה [x](http://e.example)", "*נועה*", "נועה :smile:"):
             at = self.register("noa@example.com", name=name, gender="gender_female", password="12345678")
             self.assertEqual([e.value for e in at.error], [render_error("INVALID_NAME")], name)
         self.assertEqual(self.users(), 0)
-        self.assertEqual(len(allowlist.list_entries(self.path, status="pending")), 1)
         ok = self.register("noa@example.com", name="נועה בר-אור", gender="gender_female", password="12345678")
         self.assertFalse(ok.error)
         self.assertEqual(self.users(), 1)
 
-    def test_a_listed_instructor_entry_yields_an_instructor_and_never_a_chief_or_admin(self):
-        allowlist.add_entry(self.path, "ins@example.com", role="instructor")
-        self.register("ins@example.com", gender="gender_male", password="12345678")
-        rec = repo.get_login_record(self.path, "ins@example.com")
-        self.assertEqual(repo.get_user(self.path, rec["id"])["role"], "instructor")
+    def test_nobody_can_register_as_staff(self):
+        """The form has no role field, and an e-mail that looks like staff changes nothing: roles are granted later."""
+        self.register("instructor@example.com", gender="gender_male", password="12345678")
+        rec = repo.get_login_record(self.path, "instructor@example.com")
+        self.assertEqual(repo.get_user(self.path, rec["id"])["role"], "cadet")
+
+    def test_kill_switch_replaces_the_form_and_sign_in_still_works(self):
+        self.cadet()
+        os.environ["BAROR_REGISTRATION_OPEN"] = "0"
+        at = self.fresh()
+        self.assertFalse(at.exception)
+        self.assertEqual([w.value for w in at.warning], [render_error("REGISTRATION_CLOSED")])
+        self.assertFalse([b for b in at.button if b.label == t("btn_register")])
+        self.assertFalse(self.set_cookie.called)
+        self.assertTrue(self.in_app(self.sign_in()), "signing in is not affected")
+
+    def test_hourly_cap_refuses_generically_and_never_blocks_sign_in(self):
+        os.environ["BAROR_SIGNUP_CAP_PER_HOUR"] = "2"
+        for i in range(2):
+            self.assertFalse(self.register(f"c{i}@example.com", gender="gender_male").error)
+        at = self.register("c3@example.com", gender="gender_male")
+        self.assertEqual([e.value for e in at.error], [render_error("SIGNUP_BUSY")])
+        self.assertIsNone(repo.get_login_record(self.path, "c3@example.com"))
+        self.assertTrue(self.in_app(self.sign_in("c0@example.com", "long enough 1")))
+
+    def test_join_link_preselects_the_platoon_and_stays_editable(self):
+        from baror.domain import joinlink
+        os.environ["BAROR_JOIN_LINK_SECRET"] = "s" * 40
+        pa = ops.create_platoon(self.path, "A")
+        pb = ops.create_platoon(self.path, "B")
+        token = joinlink.sign("s" * 40, pb, 0, int(dt.datetime.now(dt.timezone.utc).timestamp()) + 3600)
+        at = AppTest.from_file(APP, default_timeout=60)
+        at.query_params["join"] = token
+        at.run()
+        self.assertFalse(at.exception)
+        self.assertEqual(at.selectbox(key="reg_platoon").value, pb)
+        self.assertIn(t("join_preselected"), [c.value for c in at.caption])
+        self.assertNotIn(token, " ".join(str(e.value) for e in at.html), "the token never goes into HTML")
+        at = self.register("noa@example.com", gender="gender_female", platoon=pa, at=at)      # the cadet may change it
+        self.assertFalse(at.error)
+        u = repo.get_user(self.path, repo.get_login_record(self.path, "noa@example.com")["id"])
+        self.assertEqual(u["platoon_id"], pa)
+
+    def test_a_bad_join_token_is_ignored_silently(self):
+        from baror.domain import joinlink
+        os.environ["BAROR_JOIN_LINK_SECRET"] = "s" * 40
+        pa = ops.create_platoon(self.path, "A")
+        expired = joinlink.sign("s" * 40, pa, 0, 1000)
+        forged = joinlink.sign("z" * 40, pa, 0, 99999999999)
+        for token in ("junk", "1.2.3", expired, forged, "1.0.99999999999." + "0" * 32, "x" * 500, "<script>"):
+            at = AppTest.from_file(APP, default_timeout=60)
+            at.query_params["join"] = token
+            at.run()
+            self.assertFalse(at.exception, token[:20])
+            self.assertFalse(at.error)
+            self.assertIsNone(at.selectbox(key="reg_platoon").value)
+            self.assertNotIn(t("join_preselected"), [c.value for c in at.caption])
+
+    def test_a_valid_token_does_nothing_while_join_links_are_off(self):
+        from baror.domain import joinlink
+        pa = ops.create_platoon(self.path, "A")
+        at = AppTest.from_file(APP, default_timeout=60)
+        at.query_params["join"] = joinlink.sign("s" * 40, pa, 0, 99999999999)
+        at.run()
+        self.assertIsNone(at.selectbox(key="reg_platoon").value)
 
 
 class ForcedPasswordChange(AppCase):

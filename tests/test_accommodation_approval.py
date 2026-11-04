@@ -61,10 +61,10 @@ class Created(Base):
                                                 "WHERE user_id=? ORDER BY id", (cadet,))]
 
     def test_a_cadets_record_starts_pending_and_staff_records_start_approved(self):
-        for actor in (self.ca, self.ins, self.adm, self.boss):
+        for actor in (self.ca, self.ins, self.boss):          # schema v9: an admin records nothing (see test_accommodations)
             self.add(actor, self.ca)
         self.assertEqual(self.approvals(self.ca), [("cadet", "pending", None, None), ("instructor", "approved", None, None),
-                                                   ("admin", "approved", None, None), ("chief", "approved", None, None)])
+                                                   ("chief", "approved", None, None)])
 
     def test_the_public_dict_carries_the_approval_and_still_hides_created_by(self):
         rid = self.add(self.ca, self.ca)

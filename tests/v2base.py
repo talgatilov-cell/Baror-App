@@ -14,8 +14,16 @@ class V2Case(DbCase):
             ops.set_user_platoon(self.path, uid, platoon)
         return uid
 
-    def staff(self, email, role="instructor", platoons=(), name=None):
+    def staff(self, email, role="instructor", platoons=(), name=None, title=None):
+        """A staff account made through the trusted path. Schema v9: an instructor has exactly ONE platoon (``platoons``
+        may name at most one; for any other role it is ignored: only instructors belong to a platoon). ``title`` is
+        stored as is (NULL = a legacy account without a title; ``mm`` also sets the DB rule row ``is_mm``)."""
         uid = self.user(email, name=name or email.split("@")[0].title(), role=role)
+        platoons = tuple(platoons) if role == "instructor" else ()
+        assert len(platoons) <= 1, "an instructor belongs to one platoon"
+        if title is not None:
+            with db.transaction(self.path) as c:
+                c.execute("UPDATE users SET title=? WHERE id=?", (title, uid))
         for p in platoons:
             ops.grant_platoon(self.path, uid, p)
         return uid

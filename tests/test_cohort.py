@@ -3,8 +3,8 @@ import inspect
 import re
 import unittest
 
-from baror.errors import AuthError, NotFoundError
-from baror.storage import admin, audit, cohort, db, ops, repo
+from baror.errors import AuthError, NotFoundError, ValidationError
+from baror.storage import admin, audit, cohort, db, ops, people, repo
 from tests.v2base import V2Case
 
 NOW = dt.datetime(2026, 11, 2, 12, 0, tzinfo=dt.timezone.utc)
@@ -95,10 +95,12 @@ class IdorMatrix(CohortBase):
         for f in self.calls(self.ins):
             with self.assertRaises(AuthError):
                 f()
-        ops.set_role(self.path, self.ins, "instructor")  # grants were deleted on demotion
+        # the platoon grant was deleted on demotion; a new grant (v9: title + ONE platoon) gives access to that platoon only
+        ops.set_role(self.path, self.ins, "instructor", title="cmdr", platoon_id=self.pb)
         for f in self.calls(self.ins):
             with self.assertRaises(NotFoundError):
                 f()
+        self.assertEqual(cohort.list_platoon_members(self.path, self.ins, self.pb), [{"id": self.cb, "name": "Bet", "gender": "M", "is_km": 0}])
 
     def test_revoked_grant_takes_effect_immediately(self):
         cohort.get_cadet_results(self.path, self.ins, self.ca)
@@ -127,13 +129,16 @@ class IdorMatrix(CohortBase):
         with self.assertRaises(NotFoundError):
             cohort.get_cadet_results(self.path, self.ins, i2)
 
-    def test_admin_has_no_implicit_access_but_can_be_granted(self):
-        with self.assertRaises(NotFoundError):
-            cohort.get_cadet_results(self.path, self.adm, self.ca)
-        ops.grant_platoon(self.path, self.adm, self.pa)
-        self.assertEqual(cohort.get_cadet_results(self.path, self.adm, self.ca)["cadet"]["id"], self.ca)
-        with self.assertRaises(NotFoundError):
-            cohort.get_cadet_results(self.path, self.adm, self.cb)
+    def test_admin_has_no_access_to_the_cohort_at_all(self):
+        # schema v9: admin = permissions and cadet management only; there is no grant that could change that
+        for f in self.calls(self.adm):
+            with self.assertRaises(AuthError):
+                f()
+        with self.assertRaises(ValidationError):
+            ops.grant_platoon(self.path, self.adm, self.pa)       # only an instructor is placed in a platoon
+        for f in self.calls(self.adm):
+            with self.assertRaises(AuthError):
+                f()
 
     def test_cadet_without_platoon_unreadable(self):
         c = self.cadet("np@x.com")
@@ -239,8 +244,10 @@ class CohortReadOnly(CohortBase):
         self.assertEqual(snap(), before)
 
     def test_instructor_cannot_call_admin_functions(self):
-        for f in (lambda: admin.set_role(self.path, self.ins, self.ca, "admin"),
-                  lambda: admin.grant_platoon(self.path, self.ins, self.ins, self.pb)):
+        for f in (lambda: people.set_role(self.path, self.ins, self.ca, "instructor", title="cmdr", platoon_id=self.pa),
+                  lambda: people.move_instructor(self.path, self.ins, self.ins, self.pb),
+                  lambda: admin.deactivate_user(self.path, self.ins, self.ca),
+                  lambda: admin.create_platoon(self.path, self.ins, "Z")):
             with self.assertRaises(AuthError):
                 f()
 
@@ -302,23 +309,21 @@ class CadetHistory(CohortBase):
         self.assertIn("is_km", h["cadet"])
         self.assertIsInstance(h["accommodations"], list)
 
-    def test_not_granted_other_platoon_and_admin_without_grant_look_identical(self):
+    def test_not_granted_and_other_platoon_look_identical(self):
         i2 = self.staff("i2@x.com")                        # instructor with no grants
         seen = set()
         for actor, target in ((self.ins, self.cb),         # other platoon
                               (i2, self.ca),               # not granted
-                              (self.adm, self.ca),         # admin has no implicit access
                               (self.ins, 9999)):           # does not exist
             with self.assertRaises(NotFoundError) as cm:
                 cohort.cadet_history(self.path, actor, target)
             seen.add((type(cm.exception), cm.exception.message_key, str(cm.exception.args)))
         self.assertEqual(len(seen), 1)
 
-    def test_admin_with_grant_reads_only_the_granted_platoon(self):
-        ops.grant_platoon(self.path, self.adm, self.pa)
-        self.assertEqual(cohort.cadet_history(self.path, self.adm, self.ca)["cadet"]["id"], self.ca)
-        with self.assertRaises(NotFoundError):
-            cohort.cadet_history(self.path, self.adm, self.cb)
+    def test_admin_is_refused_the_history_outright(self):
+        for target in (self.ca, self.cb, 9999):
+            with self.assertRaises(AuthError):
+                cohort.cadet_history(self.path, self.adm, target)
 
     def test_cadet_and_bad_actors_are_refused_and_bad_or_staff_targets_not_found(self):
         for actor in (self.ca, self.cb, None, 0, -1, 9999, "1", True, 1.0, 2**70):
@@ -423,30 +428,31 @@ class SummaryBest(CohortBase):
         self.assertEqual((by[w]["best"], by[w]["results_count"]), ({"run_tenths": None, "pushups": 12}, 1))
 
     def test_best_agrees_with_cadet_history_for_every_cadet(self):
-        ops.grant_platoon(self.path, self.adm, self.pa)
         x = self.cadet("x@x.com", self.pa, name="X")
         for d, r, p in (("2026-01-01", 860, 25), ("2026-02-01", 840, None), ("2026-03-01", None, 31)):
             repo.add_result(self.path, x, test_date=d, run_tenths=r, pushups=p)
-        for s in cohort.cohort_summary(self.path, self.adm, self.pa):
-            h = cohort.cadet_history(self.path, self.adm, s["id"])
+        for s in cohort.cohort_summary(self.path, self.ins, self.pa):
+            h = cohort.cadet_history(self.path, self.ins, s["id"])
             self.assertEqual(s["best"], h["best"])
             self.assertEqual(s["results_count"], len(h["results"]))
 
 
 class MyPlatoons(CohortBase):
-    def test_lists_exactly_the_granted_platoons_by_name_and_writes_no_audit_row(self):
-        ops.grant_platoon(self.path, self.ins, self.pb)
+    def test_lists_exactly_the_one_platoon_and_writes_no_audit_row(self):
         n = self.n_audit()
-        self.assertEqual(cohort.my_platoons(self.path, self.ins), [{"id": self.pa, "name": "A"}, {"id": self.pb, "name": "B"}])
+        self.assertEqual(cohort.my_platoons(self.path, self.ins), [{"id": self.pa, "name": "A"}])
+        self.assertEqual(self.n_audit(), n)
+        ops.grant_platoon(self.path, self.ins, self.pb)             # v9: SETS the instructor's platoon, it does not add one
+        n = self.n_audit()
+        self.assertEqual(cohort.my_platoons(self.path, self.ins), [{"id": self.pb, "name": "B"}])
         self.assertEqual(self.n_audit(), n)
 
     def test_instructor_without_grants_gets_an_empty_list(self):
         self.assertEqual(cohort.my_platoons(self.path, self.staff("none@x.com")), [])
 
-    def test_admin_sees_only_explicit_grants(self):
-        self.assertEqual(cohort.my_platoons(self.path, self.adm), [])
-        ops.grant_platoon(self.path, self.adm, self.pa)
-        self.assertEqual(cohort.my_platoons(self.path, self.adm), [{"id": self.pa, "name": "A"}])
+    def test_admin_is_refused(self):
+        with self.assertRaises(AuthError):
+            cohort.my_platoons(self.path, self.adm)
 
     def test_cadets_deactivated_staff_and_strangers_are_refused(self):
         ops.deactivate_user(self.path, self.ins)

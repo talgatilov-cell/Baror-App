@@ -22,9 +22,12 @@ from baror.config import Config
 
 # (attempts, window seconds). Proposal for the owner to confirm; the research defaults were 30 / 20 / 8.
 #   login failures per address:   60 in 10 min   (a platoon of 40 typing at once)
-#   registration attempts:        100 in 1 h      (each costs one scrypt; the allowlist is the real gate)
+#   registration attempts:        60 in 1 h       (each costs one scrypt; registration is open, so this is a real gate)
+#   registration attempts, whole app: 600 in 1 h  (all addresses together; checked BEFORE the hash, so a flood from
+#                                                   many addresses cannot exhaust the CPU)
 #   failures per (address, account): 8 in 10 min  (the per-account backoff is the tight control)
-LIMITS = {"login": (60, 600.0), "register": (100, 3600.0), "pair": (8, 600.0)}
+# Behind these sits the database-wide sign-up cap (BAROR_SIGNUP_CAP_PER_HOUR, storage/signup.py).
+LIMITS = {"login": (60, 600.0), "register": (60, 3600.0), "register_app": (600, 3600.0), "pair": (8, 600.0)}
 
 log = logging.getLogger("baror.guards")
 _warned_proxy = False

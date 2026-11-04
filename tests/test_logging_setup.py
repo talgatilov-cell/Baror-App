@@ -17,7 +17,7 @@ from unittest import mock
 from baror import logging_setup as L
 from baror.auth import passwords, service, sessions
 from baror.errors import AuthError, BarorError
-from baror.storage import allowlist, db, repo
+from baror.storage import db, repo
 
 ROOT = Path(__file__).resolve().parent.parent
 EMAIL = "Dana.Cohen+test@Example.com"
@@ -396,7 +396,6 @@ class FullLoginFlow(LogCase):
             db.init_db(path)
             service.reset_unknown_email_backoff()
             email, pw, pw2 = "noa.levi@Example.com", "correct horse battery", "wrong password 1"
-            allowlist.add_entry(path, email)
             user = service.register(path, email=email, name="Noa Levi", gender="F", is_km=False, password=pw)
             L.log_event("register", email=email, password=pw, user=user["id"])
             try:
