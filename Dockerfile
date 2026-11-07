@@ -5,7 +5,7 @@
 # digest together; read it, run the tests, then merge. To refresh by hand:
 #     docker pull python:3.12-slim-bookworm && docker image inspect python:3.12-slim-bookworm   # see RepoDigests
 # Digest below resolved on 2026-11-03.
-FROM python:3.12-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337 AS builder
+FROM python:3.15-slim-bookworm@sha256:4e03260adeeebafccd084f3584e6b84823aba5651cfb53ef8a078ed441ddf9cd AS builder
 ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /build
 COPY requirements.lock .
@@ -13,7 +13,7 @@ COPY requirements.lock .
 RUN python -m venv /opt/venv \
  && /opt/venv/bin/pip install --require-hashes --only-binary=:all: --no-deps -r requirements.lock
 
-FROM python:3.12-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337 AS runtime
+FROM python:3.15-slim-bookworm@sha256:4e03260adeeebafccd084f3584e6b84823aba5651cfb53ef8a078ed441ddf9cd AS runtime
 ENV PATH=/opt/venv/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
